@@ -1,0 +1,1 @@
+scp dweiss@mirlab1.cs.hmc.edu:/home/dweiss/ttmp/E207DTWHMM/artifacts/reference_hmm.npz C:\Users\nicho\Documents\DSP\E207DTWHMM\artifacts
