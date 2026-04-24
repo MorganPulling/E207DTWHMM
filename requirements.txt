@@ -1,0 +1,23 @@
+--prefer-binary
+
+# Core numerical and analysis tools
+numpy==1.26.4
+scipy==1.15.3
+pandas==2.2.2
+matplotlib==3.9.4
+
+# Audio and feature extraction
+librosa==0.10.2.post1
+soundfile==0.12.1
+
+# Notebook workflow
+jupyter
+ipykernel
+
+# Testing and utility
+pytest
+tqdm
+numba
+
+# oltw
+https://github.com/HMC-MIR/OnlineAlignment/releases/download/v0.1.5/online_alignment-0.1.5-py3-none-any.whl
