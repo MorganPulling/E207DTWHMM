@@ -14,12 +14,12 @@ set -euo pipefail
 #   TRAIN_PERCENT=70
 #   DATA_ROOT=data
 #   OUTPUT_DIR=artifacts/train70_models
-#   PYTHON_BIN=python
+#   PYTHON_BIN=/home/dweiss/ttmp/miniconda3/bin/python
 
 TRAIN_PERCENT="${TRAIN_PERCENT:-70}"
 DATA_ROOT="${DATA_ROOT:-data}"
 OUTPUT_DIR="${OUTPUT_DIR:-artifacts/train70_models}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+PYTHON_BIN="${PYTHON_BIN:-/home/dweiss/ttmp/miniconda3/bin/python}"
 
 pieces=(
   "Chopin_Op017No4"
@@ -63,7 +63,7 @@ for piece in "${pieces[@]}"; do
     fi
 
     echo "--- $piece reference index $ref_idx ---"
-    PYTHON scripts/train_hmm.py \
+    "$PYTHON_BIN" -m scripts/train_hmm.py \
       --piece "$piece" \
       --data-root "$DATA_ROOT" \
       --reference-index "$ref_idx" \
