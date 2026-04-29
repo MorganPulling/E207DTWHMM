@@ -202,7 +202,7 @@ def StepViterbi(
     # from Viterbi to the log probability of transitioning from that state to any other state.
     LogJointFromAllPredecessors = RunningState.NormalizedLogProbabilities[:, np.newaxis] + HMM.LogTransitionMatrix
 
-    # If we're going to state j, what's the highest probability of the last state?
+    # If we're going to state j (that's columns), what's the highest probability of the last state?
     BestPredecessorLogProb = LogJointFromAllPredecessors.max(axis = 0)  # (StateCount,)
 
     # Add the probability of going to state j and the probability that the current observation
