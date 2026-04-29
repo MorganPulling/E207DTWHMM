@@ -246,6 +246,8 @@ def ComputeChromaCosineDistance(FrameA: np.ndarray, FrameB: np.ndarray) -> float
         return 1.0
     
     CosineSimilarity = np.dot(FrameA, FrameB) / (NormA * NormB)
+
+    # Ensure that the result of the cosine similarity is in the valid of range of cosine, just in case
     return float(1.0 - np.clip(CosineSimilarity, -1.0, 1.0))
 
 
@@ -296,6 +298,7 @@ def StepOLTW(
 
         # Now, we factor in the HMM weight to the cost of this frame. We decrease the cost of frames where 
         # ViterbiNormalizedLogProbs is high (this is not exactly what we discussed, but it accomplishes something similar).
+        # NOTE: This version of OLTW needs transtion weighting to normalize cost by path length
         HMMAdjustedLocalCost = LocalCost - HMMWeight * ViterbiNormalizedLogProbs[RefFrame]
 
         # What was the cost of the last row at the previous reference frame?
@@ -324,9 +327,9 @@ def StepOLTW(
 
     # Update the OLTW state
     return OLTWRunningState(
-        PreviousRowCosts=CurrentRowCosts,
-        CurrentReferenceEstimate=NewReferenceEstimate,
-        CurrentQueryFrameIndex=RunningState.CurrentQueryFrameIndex + 1
+        PreviousRowCosts = CurrentRowCosts,
+        CurrentReferenceEstimate = NewReferenceEstimate,
+        CurrentQueryFrameIndex =  RunningState.CurrentQueryFrameIndex + 1
     )
 
 
