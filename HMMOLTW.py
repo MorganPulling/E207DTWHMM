@@ -117,10 +117,8 @@ def PreprocessHMMParameters(
     """
     StateCount = len(Means)
 
-    # Set negative- and zero-probability entries of the state transition matrix to
-    # a small number to avoid bad logs
-    SafeTransitionMatrix = np.where(TransitionMatrix > 0, TransitionMatrix, 1e-300)
-    LogTransitionMatrix = np.log(SafeTransitionMatrix)
+    # Ensure that transitions with negative (impossible) probabilities or zero probabilities are never reached
+    LogTransitionMatrix = np.where(TransitionMatrix > 0, np.log(TransitionMatrix), -np.inf)
 
     CovarianceInverses = []
     LogCovarianceDeterminants = []
@@ -154,11 +152,7 @@ def InitializeViterbi(InitialDistribution: np.ndarray) -> ViterbiRunningState:
     """
     PiFlat = np.array(InitialDistribution).flatten().astype(float)
 
-    # Replace 0 or negative entries with a value that's effectively zero to avoid 
-    # log of a bad value.
-    SafePi = np.where(PiFlat > 0, PiFlat, 1e-300)
-
-    LogPi = np.log(SafePi)
+    LogPi = np.where(PiFlat > 0, np.log(PiFlat), -np.inf)
 
     # This isn't needed in the case that the initial distribution sums to 1, 
     # but we offset zero entries by a very small value. We need valid log probabilities,
@@ -207,7 +201,7 @@ def StepViterbi(
     WindowStart = max(0, RunningState.CurrentReferenceEstimate - SearchHalfWidth)
     WindowEnd = min(ReferenceFrameCount, RunningState.CurrentReferenceEstimate + SearchHalfWidth + 1)
 
-    # Shape (StateCount, StateCount): row i = log_prob[i] + log A[i, j] for all j
+    # Shape (StateCount, StateCount): row j = log_prob[i] + log A[i, j] for all j
     # In words: adds the log probability of each state (given last observation) 
     # from Viterbi to the log probability of transitioning from that state to any other state.
     LogJointFromAllPredecessors = RunningState.NormalizedLogProbabilities[:, np.newaxis] + HMM.LogTransitionMatrix
