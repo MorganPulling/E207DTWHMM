@@ -155,7 +155,7 @@ def Exec_IterativeTrainHMM(ReferenceRecordingPath: str, QueryRecordingPaths: lis
         # dtw returns the path from [end, end] back to [0, 0], so flip it to get chronological order.
         # WarpingPath[:, 0] = reference frame indices, WarpingPath[:, 1] = query frame indices.
         ### NOTE: For memory purposes, maybe we consider using a Sakoe-Chiba band to store fewer values (Claude rec.) ###
-        _, WarpingPath = librosa.sequence.dtw(X = ReferenceChroma, Y = QueryChromaMatrix, backtrack = True, step_sizes_sigma = Constants.TrainingDTWSteps)
+        _, WarpingPath = librosa.sequence.dtw(X = ReferenceChroma, Y = QueryChromaMatrix, backtrack = True)
         BacktracePath = WarpingPath[::-1]
 
         TransitionCounts, ObservationSums, OuterProductSums = UpdateHMMParameters(
