@@ -19,6 +19,7 @@ from scripts.models import AlignmentResult, FeatureSequence, Recording, Recordin
 
 
 METHODS = ("hmm_train70", "offline_dtw")
+BENCHMARK_MODES = ("paper_test", "least_recordings")
 MODEL_DIR = Path("artifacts/train70_models")
 TRAIN_PERCENT = 70
 MAX_WARP_FACTOR = 2.0
@@ -34,23 +35,26 @@ class _ModelSpec:
     path: Path
 
 
-def run_benchmark(method: str) -> pd.DataFrame:
+def run_benchmark(method: str, mode: str = "paper_test") -> pd.DataFrame:
     """Run the fixed train-reference-to-held-out benchmark and write outputs."""
 
     method = method.strip().lower()
     if method not in METHODS:
         raise ValueError(f"method must be one of: {', '.join(METHODS)}")
+    mode = mode.strip().lower()
+    if mode not in BENCHMARK_MODES:
+        raise ValueError(f"mode must be one of: {', '.join(BENCHMARK_MODES)}")
 
     recordings = data_io.discover_recordings(DATA_DIR)
-    pairs = _heldout_pairs(recordings)
+    pairs = _heldout_pairs(recordings, mode=mode)
     if not pairs:
-        raise ValueError("No train70 held-out benchmark pairs were found.")
+        raise ValueError(f"No train70 held-out benchmark pairs were found for mode {mode!r}.")
 
     rows: list[dict[str, object]] = []
     error_frames: list[pd.DataFrame] = []
     feature_cache: dict[Path, FeatureSequence] = {}
 
-    for pair in tqdm(pairs, desc=f"{method}_paper_test"):
+    for pair in tqdm(pairs, desc=f"{method}_{mode}"):
         result = _run_pair(pair, method, feature_cache)
         reference_beats = data_io.load_beat_timestamps(pair.reference.beats_path)
         query_beats = data_io.load_beat_timestamps(pair.query.beats_path)
@@ -65,18 +69,23 @@ def run_benchmark(method: str) -> pd.DataFrame:
 
     metrics_frame = pd.DataFrame(rows)
     errors_frame = pd.concat(error_frames, ignore_index=True)
-    _write_outputs(method, metrics_frame, errors_frame)
+    _write_outputs(method, mode, metrics_frame, errors_frame)
     return metrics_frame
 
 
-def _heldout_pairs(recordings: list[Recording]) -> list[RecordingPair]:
+def _heldout_pairs(recordings: list[Recording], mode: str = "paper_test") -> list[RecordingPair]:
     grouped: dict[str, list[Recording]] = {}
     for recording in recordings:
         if recording.beats_path is not None:
             grouped.setdefault(recording.piece, []).append(recording)
 
+    models = _model_specs()
+    if mode == "least_recordings":
+        piece = _least_recordings_piece(grouped, models)
+        models = [model for model in models if model.piece == piece]
+
     pairs: list[RecordingPair] = []
-    for model in _model_specs():
+    for model in models:
         piece_recordings = grouped.get(model.piece)
         if not piece_recordings:
             continue
@@ -97,6 +106,25 @@ def _heldout_pairs(recordings: list[Recording]) -> list[RecordingPair]:
                 pairs.append(pair)
 
     return sorted(pairs, key=lambda pair: (pair.piece, pair.pair_id))
+
+
+def _least_recordings_piece(
+    grouped: dict[str, list[Recording]],
+    models: list[_ModelSpec],
+) -> str | None:
+    valid_model_pieces = {
+        model.piece
+        for model in models
+        if model.piece in grouped and model.reference_index < len(grouped[model.piece])
+    }
+    candidates = [
+        (len(recordings), piece)
+        for piece, recordings in grouped.items()
+        if piece in valid_model_pieces
+    ]
+    if not candidates:
+        return None
+    return min(candidates)[1]
 
 
 def _run_pair(
@@ -160,9 +188,14 @@ def _features(recording: Recording, feature_cache: dict[Path, FeatureSequence]) 
     return feature_sequence
 
 
-def _write_outputs(method: str, metrics_frame: pd.DataFrame, errors_frame: pd.DataFrame) -> None:
+def _write_outputs(
+    method: str,
+    mode: str,
+    metrics_frame: pd.DataFrame,
+    errors_frame: pd.DataFrame,
+) -> None:
     METRICS_DIR.mkdir(parents=True, exist_ok=True)
-    prefix = METRICS_DIR / f"{method}_paper_test"
+    prefix = METRICS_DIR / f"{method}_{mode}"
     metrics_frame.to_csv(f"{prefix}_pairs.csv", index=False)
     metrics.summarize_metrics(metrics_frame).to_csv(f"{prefix}_summary.csv", index=False)
     metrics.summarize_metrics_by_piece(metrics_frame).to_csv(

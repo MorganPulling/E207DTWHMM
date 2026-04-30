@@ -179,6 +179,41 @@ def test_heldout_pairs_align_heldout_queries_to_model_reference(
     assert {pair.reference.metadata["model_path"] for pair in pairs} == {str(model_path)}
 
 
+def test_least_recordings_mode_selects_smallest_eligible_piece(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(benchmark, "MODEL_DIR", tmp_path)
+    recordings = []
+    for piece, count in {
+        "PieceB": 3,
+        "PieceA": 3,
+        "PieceC": 4,
+        "NoModel": 2,
+        "InvalidModel": 1,
+    }.items():
+        for index in range(count):
+            recordings.append(
+                Recording(
+                    piece=piece,
+                    recording_id=f"{piece}_r{index}",
+                    audio_path=tmp_path / piece / f"r{index}.wav",
+                    beats_path=tmp_path / piece / f"r{index}.beat",
+                )
+            )
+    for piece in ("PieceA", "PieceB", "PieceC"):
+        (tmp_path / f"{piece}_reference0_train70_hmm.npz").touch()
+    (tmp_path / "InvalidModel_reference10_train70_hmm.npz").touch()
+    monkeypatch.setattr(benchmark, "_warp_factor", lambda pair: 1.0)
+
+    pairs = benchmark._heldout_pairs(recordings, mode="least_recordings")
+
+    assert pairs
+    assert {pair.piece for pair in pairs} == {"PieceA"}
+    assert {pair.reference.recording_id for pair in pairs} == {"PieceA_r0"}
+    assert {pair.query.recording_id for pair in pairs} == {"PieceA_r2"}
+
+
 def test_hmm_train70_alignment_uses_existing_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(benchmark, "MODEL_DIR", tmp_path)
     piece = "Piece"
@@ -214,11 +249,19 @@ def test_hmm_train70_alignment_uses_existing_model(tmp_path: Path, monkeypatch: 
     assert result.path.shape == (len(query), 2)
 
 
-def test_run_benchmark_cli_accepts_only_method(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_benchmark_cli_accepts_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     from scripts import run_benchmark as cli
 
-    monkeypatch.setattr(cli, "run_benchmark", lambda method: [object()])
+    calls = []
+
+    def fake_run_benchmark(method: str, mode: str = "paper_test"):
+        calls.append((method, mode))
+        return [object()]
+
+    monkeypatch.setattr(cli, "run_benchmark", fake_run_benchmark)
 
     assert cli.main(["hmm_train70"]) == 0
+    assert cli.main(["hmm_train70", "--mode", "least_recordings"]) == 0
+    assert calls == [("hmm_train70", "paper_test"), ("hmm_train70", "least_recordings")]
     with pytest.raises(SystemExit):
         cli.main(["hmm_train70", "--no-save"])
