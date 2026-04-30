@@ -377,7 +377,11 @@ def ProcessNextFrame(
     StreamingDTWEstimate = UpdatedStreamingDTWState.CurrentReferenceEstimate
     ViterbiEstimate = UpdatedViterbiState.CurrentReferenceEstimate
 
+<<<<<<< HEAD
     WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * ViterbiEstimate)
+=======
+    WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * ViterbiEstimate) // 2
+>>>>>>> 4c2b110bf58d1dbddc49bd1a36ea813a51ce996b
 
     return WeightedMidpointState, UpdatedViterbiState, UpdatedStreamingDTWState
 
