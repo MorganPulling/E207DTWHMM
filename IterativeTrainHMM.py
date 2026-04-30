@@ -33,9 +33,12 @@ def UpdateHMMParameters(
     ReferenceFrameSequence = NewBacktracePath[:, 0]
     QueryFrameSequence = NewBacktracePath[:, 1]
 
-    # Add transition counts. The caller row-normalizes to get probabilities
-    FromStates = ReferenceFrameSequence[:-1]
-    ToStates = ReferenceFrameSequence[1:]
+    # A transition is counted only at DTW steps where the query frame increments by 1.
+    QueryIncrements = np.diff(QueryFrameSequence) == 1
+    FromStates = ReferenceFrameSequence[:-1][QueryIncrements]
+    ToStates = ReferenceFrameSequence[1:][QueryIncrements]
+    
+    # Add transition counts. The caller row-normalizes to get probabilities.
     np.add.at(OldTransitionCounts, (FromStates, ToStates), 1)
 
     # For each state, gather all observations aligned to it and accumulate sums
@@ -84,7 +87,7 @@ def NormalizeHMMParameters(
     """
     RowTotalTransitions = TransitionCounts.sum(axis = 1, keepdims = True)
 
-    # Avoid dividing by 0
+    # Avoid dividing by 0, and assume that every state is reached once
     RowTotalTransitions[RowTotalTransitions == 0] = 1
     A = TransitionCounts / RowTotalTransitions
 
@@ -151,7 +154,7 @@ def Exec_IterativeTrainHMM(ReferenceRecordingPath: str, QueryRecordingPaths: lis
 
         # dtw returns the path from [end, end] back to [0, 0], so flip it to get chronological order.
         # WarpingPath[:, 0] = reference frame indices, WarpingPath[:, 1] = query frame indices.
-        ### NOTE: For memory purposes, maybe we consider using a Sakoe-Chiba band to store fewer values (Claude rec.)? ###
+        ### NOTE: For memory purposes, maybe we consider using a Sakoe-Chiba band to store fewer values (Claude rec.) ###
         _, WarpingPath = librosa.sequence.dtw(X = ReferenceChroma, Y = QueryChromaMatrix, backtrack = True)
         BacktracePath = WarpingPath[::-1]
 
