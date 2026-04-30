@@ -222,11 +222,14 @@ def StepViterbi(
     # See InitializeViterbi for what we're doing here
     NormalizedLogProbabilities = RawLogProbabilities - logsumexp(RawLogProbabilities)
 
-    # Grab only the costs within the window
-    WindowProbabilities = NormalizedLogProbabilities[WindowStart:WindowEnd]
+    WindowProbabilities = np.full(ReferenceFrameCount, -np.inf)
 
-    # Create a new reference estimate based on the lowest-cost frame
-    NewReferenceEstimate = WindowStart + int(np.argmax(WindowProbabilities))
+    # Grab only the costs within the window. This may not actually be doing anything. We should 
+    # consider setting values of the NormalizedLogProbabilities outside of the window to -infty
+    WindowProbabilities[WindowStart:WindowEnd] = NormalizedLogProbabilities[WindowStart:WindowEnd]
+
+    # Create a new reference estimate based on the lowest-cost frame within the constraint window
+    NewReferenceEstimate = int(np.argmax(WindowProbabilities))
 
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities, CurrentReferenceEstimate = NewReferenceEstimate)
 
@@ -326,7 +329,7 @@ def StepStreamingDTW(
         # What is the cost of the current row at the previous reference frame?
         HorizontalPredecessorCost = (CurrentRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
 
-        # Again, this is not exactly what we discussed. What's happening here is that HMM is weighting the cosine distance, so
+        # Again, this is not exactly what we discussed. What's happening here is that HMM is modifying the cosine distance, so
         # we're using a method that statically weights Viterbi and StreamingDTW against each other. We'd like to weight transitions based
         # on how well they achieve the state outlined by the HMM (this has its own faults, however).
         CurrentRowCosts[RefFrame] = HMMAdjustedLocalCost + min(
@@ -407,10 +410,7 @@ def InitializeHMMStreamingDTW(
         - InitialDistribution:  (StateCount,) or (1, StateCount) initial distribution Pi
         - Means:                list of (FeatureDim,) per-state emission mean vectors
         - Covars:               list of (FeatureDim, FeatureDim) per-state covariance matrices
-        - SearchHalfWidth:      reference frames on each side of the current estimate to
-                                consider in StreamingDTW (default: 50 frames is about 1.2 s at 512-sample hop)
-        - HMMWeight:            how strongly Viterbi log-probabilities bias StreamingDTW costs;
-                                0 = pure StreamingDTW, larger values increase HMM influence (default: 0.1)
+
     Returns:
         - HMM:          preprocessed HMM parameters
         - ViterbiState: initial Viterbi state
