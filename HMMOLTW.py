@@ -219,17 +219,17 @@ def StepViterbi(
     # corresponds to state j
     RawLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProbabilities
 
-    # See InitializeViterbi for what we're doing here
+    # See InitializeViterbi for what we're doing here. This effectively normalizes the RawLogProbabilities in log space.
     NormalizedLogProbabilities = RawLogProbabilities - logsumexp(RawLogProbabilities)
 
-    WindowProbabilities = np.full(ReferenceFrameCount, -np.inf)
+    WindowLogProbabilities = np.full(ReferenceFrameCount, -np.inf)
 
     # Grab only the costs within the window. This may not actually be doing anything. We should 
     # consider setting values of the NormalizedLogProbabilities outside of the window to -infty
-    WindowProbabilities[WindowStart:WindowEnd] = NormalizedLogProbabilities[WindowStart:WindowEnd]
+    WindowLogProbabilities[WindowStart:WindowEnd] = NormalizedLogProbabilities[WindowStart:WindowEnd]
 
     # Create a new reference estimate based on the lowest-cost frame within the constraint window
-    NewReferenceEstimate = int(np.argmax(WindowProbabilities))
+    NewReferenceEstimate = int(np.argmax(WindowLogProbabilities))
 
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities, CurrentReferenceEstimate = NewReferenceEstimate)
 
