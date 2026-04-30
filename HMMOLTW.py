@@ -43,7 +43,7 @@ class HMMParameters:
 
     Stores the transition matrix in log-space and precomputes per-state
     covariance inverses and log-determinants to avoid repeated matrix
-    inversions as OLTW runs.
+    inversions as StreamingDTW runs.
 
     Fields:
         - LogTransitionMatrix:        (StateCount, StateCount) log A[i,j] = log P(j | i)
@@ -72,7 +72,7 @@ class ViterbiRunningState:
 
 
 @dataclass
-class OLTWRunningState:
+class StreamingDTWRunningState:
     """
     Running state for the online time-warping aligner.
 
@@ -215,20 +215,20 @@ def StepViterbi(
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities)
 
 
-def InitializeOLTW(RefFrameCount: int) -> OLTWRunningState:
+def InitializeStreamingDTW(RefFrameCount: int) -> StreamingDTWRunningState:
     """
-    Creates the initial OLTW state, setting the alignment start at reference frame 0.
+    Creates the initial StreamingDTW state, setting the alignment start at reference frame 0.
 
     Parameters:
         - RefFrameCount: total number of reference frames
     Returns:
-        - OLTWRunningState ready to receive the first query frame
+        - StreamingDTWRunningState ready to receive the first query frame
     """
 
     PreviousRowCosts = np.full(RefFrameCount, np.inf)
     PreviousRowCosts[0] = 0.0
 
-    return OLTWRunningState(
+    return StreamingDTWRunningState(
         PreviousRowCosts=PreviousRowCosts,
         CurrentReferenceEstimate=0,
         CurrentQueryFrameIndex=0
@@ -236,7 +236,7 @@ def InitializeOLTW(RefFrameCount: int) -> OLTWRunningState:
 
 
 def ComputeChromaCosineDistance(FrameA: np.ndarray, FrameB: np.ndarray) -> float:
-    """Cosine distance between two chroma feature vectors, in [0, 1]."""
+    """Determines the cosine distance between two chroma feature vectors (in [0, 1])."""
 
     NormA = np.linalg.norm(FrameA)
     NormB = np.linalg.norm(FrameB)
@@ -251,14 +251,14 @@ def ComputeChromaCosineDistance(FrameA: np.ndarray, FrameB: np.ndarray) -> float
     return float(1.0 - np.clip(CosineSimilarity, -1.0, 1.0))
 
 
-def StepOLTW(
-    RunningState: OLTWRunningState,
+def StepStreamingDTW(
+    RunningState: StreamingDTWRunningState,
     ReferenceChroma: np.ndarray,
     NewQueryFrame: np.ndarray,
     ViterbiNormalizedLogProbs: np.ndarray,
     SearchHalfWidth: int,
     HMMWeight: float
-) -> OLTWRunningState:
+) -> StreamingDTWRunningState:
     """
     Processes one new query frame in the online DTW aligner, weighting cell costs
     by the current Viterbi state distribution.
@@ -274,18 +274,18 @@ def StepOLTW(
         left      (t,   r-1) : reference advances, query stays (built left-to-right)
 
     Parameters:
-        - RunningState:               current OLTW state
+        - RunningState:               current StreamingDTW state
         - ReferenceChroma:            (FeatureDim, RefFrameCount) reference feature matrix
         - NewQueryFrame:              (FeatureDim,) current query chroma vector
         - ViterbiNormalizedLogProbs:  (StateCount,) normalized log-probs from the current Viterbi step
         - SearchHalfWidth:            half-width of the active window around CurrentReferenceEstimate
         - HMMWeight:                  scaling factor for the Viterbi cost bias (0 = pure DTW)
     Returns:
-        - Updated OLTWRunningState with new row costs and reference frame estimate
+        - Updated StreamingDTWRunningState with new row costs and reference frame estimate
     """
     RefFrameCount = ReferenceChroma.shape[1]
 
-    # This imposes a global constraint (like Sakoe-Chiba) so we don't use as much memory when running OLTW
+    # This imposes a global constraint (like Sakoe-Chiba) so we don't use as much memory when running StreamingDTW
     WindowStart = max(0, RunningState.CurrentReferenceEstimate - SearchHalfWidth)
     WindowEnd = min(RefFrameCount, RunningState.CurrentReferenceEstimate + SearchHalfWidth + 1)
 
@@ -298,7 +298,7 @@ def StepOLTW(
 
         # Now, we factor in the HMM weight to the cost of this frame. We decrease the cost of frames where 
         # ViterbiNormalizedLogProbs is high (this is not exactly what we discussed, but it accomplishes something similar).
-        # NOTE: This version of OLTW needs transtion weighting to normalize cost by path length
+        # NOTE: This version of StreamingDTW needs transtion weighting to normalize cost by path length
         HMMAdjustedLocalCost = LocalCost - HMMWeight * ViterbiNormalizedLogProbs[RefFrame]
 
         # What was the cost of the last row at the previous reference frame?
@@ -311,7 +311,7 @@ def StepOLTW(
         HorizontalPredecessorCost = (CurrentRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
 
         # Again, this is not exactly what we discussed. What's happening here is that HMM is weighting the cosine distance, so
-        # we're using a method that statically weights Viterbi and OLTW against each other. We'd like to weight transitions based
+        # we're using a method that statically weights Viterbi and StreamingDTW against each other. We'd like to weight transitions based
         # on how well they achieve the state outlined by the HMM (this has its own faults, however).
         CurrentRowCosts[RefFrame] = HMMAdjustedLocalCost + min(
             DiagonalPredecessorCost,
@@ -325,55 +325,54 @@ def StepOLTW(
     # Create a new reference estimate based on the lowest-cost frame
     NewReferenceEstimate = WindowStart + int(np.argmin(WindowCosts))
 
-    # Update the OLTW state
-    return OLTWRunningState(
+    # Update the StreamingDTW state
+    return StreamingDTWRunningState(
         PreviousRowCosts = CurrentRowCosts,
         CurrentReferenceEstimate = NewReferenceEstimate,
         CurrentQueryFrameIndex =  RunningState.CurrentQueryFrameIndex + 1
     )
 
-
 def ProcessNextFrame(
     ViterbiState: ViterbiRunningState,
-    OLTWState: OLTWRunningState,
+    StreamingDTWState: StreamingDTWRunningState,
     HMM: HMMParameters,
     ReferenceChroma: np.ndarray,
     NewQueryFrame: np.ndarray,
     SearchHalfWidth: int,
     HMMWeight: float
-) -> tuple[int, ViterbiRunningState, OLTWRunningState]:
+) -> tuple[int, ViterbiRunningState, StreamingDTWRunningState]:
     """
-    Processes one incoming query frame through the combined HMM-OLTW aligner.
+    Processes one incoming query frame through the combined HMM-StreamingDTW aligner.
 
-    Viterbi is updated before OLTW so the HMM has already incorporated the new
+    Viterbi is updated before StreamingDTW so the HMM has already incorporated the new
     observation when its state distribution is used to bias the DTW costs.
 
     Parameters:
         - ViterbiState:    current running Viterbi state
-        - OLTWState:       current running OLTW state
+        - StreamingDTWState:       current running StreamingDTW state
         - HMM:             preprocessed HMM parameters
         - ReferenceChroma: (FeatureDim, RefFrameCount) reference feature matrix
         - NewQueryFrame:   (FeatureDim,) current query chroma vector
-        - SearchHalfWidth: half-width of the OLTW active window in frames
+        - SearchHalfWidth: half-width of the StreamingDTW active window in frames
         - HMMWeight:       scaling factor for the Viterbi cost bias
     Returns:
         - ReferenceFrameEstimate: best estimate of the current reference position
         - UpdatedViterbiState
-        - UpdatedOLTWState
+        - UpdatedStreamingDTWState
     """
     UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame)
-    UpdatedOLTWState = StepOLTW(
-        OLTWState,
+    UpdatedStreamingDTWState = StepStreamingDTW(
+        StreamingDTWState,
         ReferenceChroma,
         NewQueryFrame,
         UpdatedViterbiState.NormalizedLogProbabilities,
         SearchHalfWidth,
         HMMWeight
     )
-    return UpdatedOLTWState.CurrentReferenceEstimate, UpdatedViterbiState, UpdatedOLTWState
+    return UpdatedStreamingDTWState.CurrentReferenceEstimate, UpdatedViterbiState, UpdatedStreamingDTWState
 
 
-def InitializeHMMOLTW(
+def InitializeHMMStreamingDTW(
     ReferenceChroma: np.ndarray,
     TransitionMatrix: np.ndarray,
     InitialDistribution: np.ndarray,
@@ -381,9 +380,9 @@ def InitializeHMMOLTW(
     Covars: list,
     SearchHalfWidth: int = 50,
     HMMWeight: float = 0.1
-) -> tuple[HMMParameters, ViterbiRunningState, OLTWRunningState]:
+) -> tuple[HMMParameters, ViterbiRunningState, StreamingDTWRunningState]:
     """
-    Initializes all state required to run the online HMM-OLTW aligner.
+    Initializes all state required to run the online HMM-StreamingDTW aligner.
 
     Accepts the outputs of IterativeTrainHMM.Exec_IterativeTrainHMM directly.
     The returned objects are passed to ProcessNextFrame on each incoming query frame.
@@ -395,13 +394,13 @@ def InitializeHMMOLTW(
         - Means:                list of (FeatureDim,) per-state emission mean vectors
         - Covars:               list of (FeatureDim, FeatureDim) per-state covariance matrices
         - SearchHalfWidth:      reference frames on each side of the current estimate to
-                                consider in OLTW (default: 50 frames ~ 1.2 s at 512-sample hop)
-        - HMMWeight:            how strongly Viterbi log-probabilities bias OLTW costs;
-                                0 = pure OLTW, larger values increase HMM influence (default: 0.1)
+                                consider in StreamingDTW (default: 50 frames is about 1.2 s at 512-sample hop)
+        - HMMWeight:            how strongly Viterbi log-probabilities bias StreamingDTW costs;
+                                0 = pure StreamingDTW, larger values increase HMM influence (default: 0.1)
     Returns:
         - HMM:          preprocessed HMM parameters
         - ViterbiState: initial Viterbi state
-        - OLTWState:    initial OLTW state
+        - StreamingDTWState:    initial StreamingDTW state
     """
     RefFrameCount = ReferenceChroma.shape[1]
     StateCount = len(Means)
@@ -412,6 +411,6 @@ def InitializeHMMOLTW(
 
     HMM = PreprocessHMMParameters(TransitionMatrix, Means, Covars)
     ViterbiState = InitializeViterbi(InitialDistribution)
-    OLTWState = InitializeOLTW(RefFrameCount)
+    StreamingDTWState = InitializeStreamingDTW(RefFrameCount)
 
-    return HMM, ViterbiState, OLTWState
+    return HMM, ViterbiState, StreamingDTWState
