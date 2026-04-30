@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import numpy as np
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hmm_alignment.dtw import dtw_pseudo_labels, local_cosine_cost
 from hmm_alignment.evaluation import frame_error_metrics
 from hmm_alignment.features import l2_normalize_frames
 from hmm_alignment.hmm import ReferenceHMM
 from hmm_alignment.training import estimate_jump_probs, train_reference_hmm
+from scripts import hmm_benchmark as benchmark
+from scripts.models import FeatureSequence, Recording, RecordingPair
+from scripts.offline_dtw import run_offline_dtw
 
 
 def test_l2_normalize_frames_produces_unit_nonzero_rows() -> None:
@@ -116,3 +123,96 @@ def test_frame_error_metrics() -> None:
     metrics = frame_error_metrics(np.array([0, 1, 3]), np.array([0, 2, 2]))
     assert metrics.mean_abs_error == 2 / 3
     assert metrics.within_1_frame == 1.0
+
+
+def test_offline_dtw_returns_monotone_result() -> None:
+    reference = np.eye(4)
+    query = np.vstack([reference[0], reference[1], reference[1], reference[2], reference[3]])
+    reference_features = FeatureSequence(
+        values=reference,
+        frame_times=np.arange(len(reference), dtype=float),
+        sample_rate=22050,
+        hop_length=512,
+        feature_name="chroma_stft",
+    )
+    query_features = FeatureSequence(
+        values=query,
+        frame_times=np.arange(len(query), dtype=float),
+        sample_rate=22050,
+        hop_length=512,
+        feature_name="chroma_stft",
+    )
+    result = run_offline_dtw(reference_features, query_features)
+    path = result.path
+    assert result.method_name == "offline_dtw"
+    assert path.shape[1] == 2
+    assert np.all(np.diff(path[:, 0]) >= 0)
+    assert np.all(np.diff(path[:, 1]) >= 0)
+
+
+def test_heldout_pairs_use_train70_queries_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(benchmark, "MODEL_DIR", tmp_path)
+    piece = "Piece"
+    recordings = []
+    for index in range(10):
+        (tmp_path / f"{piece}_reference{index}_train70_hmm.npz").touch()
+        recordings.append(
+            Recording(
+                piece=piece,
+                recording_id=f"r{index}",
+                audio_path=tmp_path / f"r{index}.wav",
+                beats_path=tmp_path / f"r{index}.beat",
+            )
+        )
+    monkeypatch.setattr(benchmark, "_warp_factor", lambda pair: 1.0)
+
+    pairs = benchmark._heldout_pairs(recordings)
+
+    assert pairs
+    assert {int(pair.query.recording_id[1:]) for pair in pairs} == {7, 8, 9}
+    assert all(pair.reference.recording_id != pair.query.recording_id for pair in pairs)
+
+
+def test_hmm_train70_alignment_uses_existing_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(benchmark, "MODEL_DIR", tmp_path)
+    piece = "Piece"
+    reference = np.eye(4)
+    query = np.vstack([reference[0], reference[1], reference[2], reference[3]])
+    model = train_reference_hmm(reference, [query], max_jump=2)
+    model_path = tmp_path / f"{piece}_reference0_train70_hmm.npz"
+    model.save(model_path)
+
+    pair = RecordingPair(
+        piece=piece,
+        reference=Recording(piece, "ref", tmp_path / "ref.wav", tmp_path / "ref.beat"),
+        query=Recording(piece, "query", tmp_path / "query.wav", tmp_path / "query.beat"),
+    )
+
+    def fake_features(recording: Recording, feature_cache: dict[Path, FeatureSequence]):
+        values = reference if recording.recording_id == "ref" else query
+        return FeatureSequence(
+            values=values,
+            frame_times=np.arange(len(values), dtype=float),
+            sample_rate=22050,
+            hop_length=512,
+            feature_name="chroma_stft",
+            metadata={"recording_id": recording.recording_id},
+        )
+
+    monkeypatch.setattr(benchmark, "_features", fake_features)
+    monkeypatch.setattr(benchmark, "_reference_index", lambda reference_recording: 0)
+    result = benchmark._run_pair(pair, "hmm_train70", {})
+
+    assert result.method_name == "hmm_train70"
+    assert result.metadata["model_path"] == str(model_path)
+    assert result.path.shape == (len(query), 2)
+
+
+def test_run_benchmark_cli_accepts_only_method(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scripts import run_benchmark as cli
+
+    monkeypatch.setattr(cli, "run_benchmark", lambda method: [object()])
+
+    assert cli.main(["hmm_train70"]) == 0
+    with pytest.raises(SystemExit):
+        cli.main(["hmm_train70", "--no-save"])
