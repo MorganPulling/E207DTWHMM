@@ -65,11 +65,15 @@ class ViterbiRunningState:
     """
     Running state for the online Viterbi decoder.
 
-    NormalizedLogProbabilities[i] holds an approximation of log P(state = i | obs_0..t),
-    computed with the Viterbi algorithm, and normalized at each step via
-    log-sum-exp to prevent underflow over long sequences (Claude rec).
+    Fields:
+        - NormalizedLogProbabilities[i] holds an approximation of log P(state = i | obs_0..t),
+          computed with the Viterbi algorithm, and normalized at each step via
+          log-sum-exp to prevent underflow over long sequences (Claude rec).
+        - CurrentReferenceEstimate: index of the reference frame with maximum
+                                    accumulated probability at the current query position
     """
     NormalizedLogProbabilities: np.ndarray  # (StateCount,)
+    CurrentReferenceEstimate: int
 
 
 @dataclass
@@ -163,13 +167,14 @@ def InitializeViterbi(InitialDistribution: np.ndarray) -> ViterbiRunningState:
     # it to a valid distribution with a sum of 1.
     NormalizedLogPi = LogPi - logsumexp(LogPi)
 
-    return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogPi)
+    return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogPi, CurrentReferenceEstimate = 0)
 
 
 def StepViterbi(
     RunningState: ViterbiRunningState,
     HMM: HMMParameters,
-    NewObservation: np.ndarray
+    NewObservation: np.ndarray,
+    SearchHalfWidth: int,
 ) -> ViterbiRunningState:
     """
     Advances the Viterbi run by one observation frame.
@@ -186,7 +191,7 @@ def StepViterbi(
     Returns:
         - Updated ViterbiRunningState
     """
-
+    ReferenceFrameCount = HMM.StateCount
     # Determine the log probability of the current observation for each state
     LogEmissions = np.array([
         ComputeLogGaussianEmission(
@@ -195,25 +200,35 @@ def StepViterbi(
             HMM.CovarianceInverses[StateIndex],
             HMM.LogCovarianceDeterminants[StateIndex]
         )
-        for StateIndex in range(HMM.StateCount)
+        for StateIndex in range(ReferenceFrameCount)
     ])
+
+    # This imposes a global constraint (like Sakoe-Chiba) so we don't make large jumps to states far beyond the current estimate
+    WindowStart = max(0, RunningState.CurrentReferenceEstimate - SearchHalfWidth)
+    WindowEnd = min(ReferenceFrameCount, RunningState.CurrentReferenceEstimate + SearchHalfWidth + 1)
 
     # Shape (StateCount, StateCount): row i = log_prob[i] + log A[i, j] for all j
     # In words: adds the log probability of each state (given last observation) 
     # from Viterbi to the log probability of transitioning from that state to any other state.
     LogJointFromAllPredecessors = RunningState.NormalizedLogProbabilities[:, np.newaxis] + HMM.LogTransitionMatrix
 
-    # If we're going to state j (that's columns), what's the highest probability of the last state?
-    BestPredecessorLogProb = LogJointFromAllPredecessors.max(axis = 0)  # (StateCount,)
+    # What's the highest-probability of the last state?
+    BestPredecessorLogProbabilities = LogJointFromAllPredecessors.max(axis = 0)  # (StateCount,)
 
     # Add the probability of going to state j and the probability that the current observation
     # corresponds to state j
-    RawLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProb
+    RawLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProbabilities
 
     # See InitializeViterbi for what we're doing here
     NormalizedLogProbabilities = RawLogProbabilities - logsumexp(RawLogProbabilities)
 
-    return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities)
+    # Grab only the costs within the window
+    WindowProbabilities = NormalizedLogProbabilities[WindowStart:WindowEnd]
+
+    # Create a new reference estimate based on the lowest-cost frame
+    NewReferenceEstimate = WindowStart + int(np.argmax(WindowProbabilities))
+
+    return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities, CurrentReferenceEstimate = NewReferenceEstimate)
 
 
 def InitializeStreamingDTW(RefFrameCount: int) -> StreamingDTWRunningState:
@@ -361,7 +376,7 @@ def ProcessNextFrame(
         - UpdatedViterbiState
         - UpdatedStreamingDTWState
     """
-    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame)
+    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame, SearchHalfWidth)
     UpdatedStreamingDTWState = StepStreamingDTW(
         StreamingDTWState,
         ReferenceChroma,
