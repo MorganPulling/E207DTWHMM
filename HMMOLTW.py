@@ -1,4 +1,5 @@
 import numpy as np
+import Constants
 from numpy.linalg import inv, slogdet
 from scipy.special import logsumexp
 from dataclasses import dataclass
@@ -207,7 +208,7 @@ def StepViterbi(
 
     # Add the probability of going to state j and the probability that the current observation
     # corresponds to state j
-    RawLogProbabilities = LogEmissions + BestPredecessorLogProb
+    RawLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProb
 
     # See InitializeViterbi for what we're doing here
     NormalizedLogProbabilities = RawLogProbabilities - logsumexp(RawLogProbabilities)
