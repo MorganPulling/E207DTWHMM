@@ -268,9 +268,7 @@ def StepStreamingDTW(
     RunningState: StreamingDTWRunningState,
     ReferenceChroma: np.ndarray,
     NewQueryFrame: np.ndarray,
-    ViterbiNormalizedLogProbs: np.ndarray,
     SearchHalfWidth: int,
-    HMMWeight: float
 ) -> StreamingDTWRunningState:
     """
     Processes one new query frame in the online DTW aligner, weighting cell costs
@@ -309,11 +307,6 @@ def StepStreamingDTW(
     for RefFrame in range(WindowStart, WindowEnd):
         LocalCost = ComputeChromaCosineDistance(ReferenceChroma[:, RefFrame], NewQueryFrame)
 
-        # Now, we factor in the HMM weight to the cost of this frame. We decrease the cost of frames where 
-        # ViterbiNormalizedLogProbs is high (this is not exactly what we discussed, but it accomplishes something similar).
-        # NOTE: This version of StreamingDTW needs transtion weighting to normalize cost by path length
-        HMMAdjustedLocalCost = LocalCost + HMMWeight * -(ViterbiNormalizedLogProbs[RefFrame])
-
         # What was the cost of the last row at the previous reference frame?
         DiagonalPredecessorCost = (RunningState.PreviousRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
 
@@ -326,7 +319,7 @@ def StepStreamingDTW(
         # Again, this is not exactly what we discussed. What's happening here is that HMM is modifying the cosine distance, so
         # we're using a method that statically weights Viterbi and StreamingDTW against each other. We'd like to weight transitions based
         # on how well they achieve the state outlined by the HMM (this has its own faults, however).
-        CurrentRowCosts[RefFrame] = HMMAdjustedLocalCost + min(
+        CurrentRowCosts[RefFrame] = LocalCost + min(
             DiagonalPredecessorCost,
             VerticalPredecessorCost,
             HorizontalPredecessorCost
@@ -378,11 +371,15 @@ def ProcessNextFrame(
         StreamingDTWState,
         ReferenceChroma,
         NewQueryFrame,
-        UpdatedViterbiState.NormalizedLogProbabilities,
-        SearchHalfWidth,
-        HMMWeight
+        SearchHalfWidth
     )
-    return UpdatedStreamingDTWState.CurrentReferenceEstimate, UpdatedViterbiState, UpdatedStreamingDTWState
+
+    StreamingDTWEstimate = UpdatedStreamingDTWState.CurrentReferenceEstimate
+    ViterbiEstimate = UpdatedViterbiState.CurrentReferenceEstimate
+
+    WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * ViterbiEstimate) // 2
+
+    return WeightedMidpointState, UpdatedViterbiState, UpdatedStreamingDTWState
 
 
 def InitializeHMMStreamingDTW(
