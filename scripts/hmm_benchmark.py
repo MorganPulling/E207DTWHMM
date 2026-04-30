@@ -1,8 +1,10 @@
-"""Fixed train70 held-out benchmark for E207DTWHMM."""
+"""Fixed train70 reference-to-held-out benchmark for E207DTWHMM."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
@@ -20,10 +22,20 @@ METHODS = ("hmm_train70", "offline_dtw")
 MODEL_DIR = Path("artifacts/train70_models")
 TRAIN_PERCENT = 70
 MAX_WARP_FACTOR = 2.0
+MODEL_FILENAME_RE = re.compile(
+    r"^(?P<piece>.+)_reference(?P<reference_index>\d+)_train(?P<train_percent>\d+)_hmm\.npz$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ModelSpec:
+    piece: str
+    reference_index: int
+    path: Path
 
 
 def run_benchmark(method: str) -> pd.DataFrame:
-    """Run the fixed held-out benchmark and write paper-style CSV outputs."""
+    """Run the fixed train-reference-to-held-out benchmark and write outputs."""
 
     method = method.strip().lower()
     if method not in METHODS:
@@ -64,21 +76,25 @@ def _heldout_pairs(recordings: list[Recording]) -> list[RecordingPair]:
             grouped.setdefault(recording.piece, []).append(recording)
 
     pairs: list[RecordingPair] = []
-    for piece, piece_recordings in grouped.items():
+    for model in _model_specs():
+        piece_recordings = grouped.get(model.piece)
+        if not piece_recordings:
+            continue
         ordered = sorted(piece_recordings, key=lambda item: item.audio_path)
+        if model.reference_index >= len(ordered):
+            raise ValueError(
+                f"Model {model.path} references recording index {model.reference_index}, "
+                f"but piece {model.piece!r} only has {len(ordered)} annotated recordings."
+            )
         train_count = len(ordered) * TRAIN_PERCENT // 100
-        index_by_id = {recording.recording_id: index for index, recording in enumerate(ordered)}
         heldout_queries = ordered[train_count:]
-        for reference in ordered:
-            reference_index = index_by_id[reference.recording_id]
-            if not _model_path(piece, reference_index).exists():
+        reference = _with_model_metadata(ordered[model.reference_index], model)
+        for query in heldout_queries:
+            if query.recording_id == reference.recording_id:
                 continue
-            for query in heldout_queries:
-                if query.recording_id == reference.recording_id:
-                    continue
-                pair = RecordingPair(piece=piece, reference=reference, query=query)
-                if _warp_factor(pair) <= MAX_WARP_FACTOR:
-                    pairs.append(pair)
+            pair = RecordingPair(piece=model.piece, reference=reference, query=query)
+            if _warp_factor(pair) <= MAX_WARP_FACTOR:
+                pairs.append(pair)
 
     return sorted(pairs, key=lambda pair: (pair.piece, pair.pair_id))
 
@@ -94,8 +110,8 @@ def _run_pair(
     if method == "offline_dtw":
         return offline_dtw.run_offline_dtw(reference_features, query_features)
 
-    reference_index = _reference_index(pair.reference)
-    model_path = _model_path(pair.piece, reference_index)
+    reference_index = _pair_reference_index(pair)
+    model_path = _pair_model_path(pair, reference_index)
     model = ReferenceHMM.load(model_path)
     result = model.filter(query_features.values)
     reference_indices = np.clip(result.map_path, 0, len(reference_features.frame_times) - 1)
@@ -169,6 +185,56 @@ def _reference_index(reference: Recording) -> int:
         path for path in reference.audio_path.parent.glob("*.wav") if path.is_file()
     )
     return recordings.index(reference.audio_path)
+
+
+def _pair_reference_index(pair: RecordingPair) -> int:
+    reference_index = pair.reference.metadata.get("reference_index")
+    if reference_index is not None:
+        return int(reference_index)
+    return _reference_index(pair.reference)
+
+
+def _pair_model_path(pair: RecordingPair, reference_index: int) -> Path:
+    model_path = pair.reference.metadata.get("model_path")
+    if model_path is not None:
+        return Path(model_path)
+    return _model_path(pair.piece, reference_index)
+
+
+def _model_specs() -> list[_ModelSpec]:
+    if not MODEL_DIR.exists():
+        return []
+
+    specs: list[_ModelSpec] = []
+    for path in sorted(MODEL_DIR.glob("*.npz")):
+        match = MODEL_FILENAME_RE.match(path.name)
+        if match is None:
+            continue
+        train_percent = int(match.group("train_percent"))
+        if train_percent != TRAIN_PERCENT:
+            continue
+        specs.append(
+            _ModelSpec(
+                piece=match.group("piece"),
+                reference_index=int(match.group("reference_index")),
+                path=path,
+            )
+        )
+    return specs
+
+
+def _with_model_metadata(reference: Recording, model: _ModelSpec) -> Recording:
+    return Recording(
+        piece=reference.piece,
+        recording_id=reference.recording_id,
+        audio_path=reference.audio_path,
+        beats_path=reference.beats_path,
+        metadata={
+            **reference.metadata,
+            "model_path": str(model.path),
+            "reference_index": model.reference_index,
+        },
+    )
 
 
 def _model_path(piece: str, reference_index: int) -> Path:

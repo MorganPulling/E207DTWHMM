@@ -150,12 +150,14 @@ def test_offline_dtw_returns_monotone_result() -> None:
     assert np.all(np.diff(path[:, 1]) >= 0)
 
 
-def test_heldout_pairs_use_train70_queries_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_heldout_pairs_align_heldout_queries_to_model_reference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(benchmark, "MODEL_DIR", tmp_path)
     piece = "Piece"
     recordings = []
     for index in range(10):
-        (tmp_path / f"{piece}_reference{index}_train70_hmm.npz").touch()
         recordings.append(
             Recording(
                 piece=piece,
@@ -164,13 +166,17 @@ def test_heldout_pairs_use_train70_queries_only(tmp_path: Path, monkeypatch: pyt
                 beats_path=tmp_path / f"r{index}.beat",
             )
         )
+    model_path = tmp_path / f"{piece}_reference2_train70_hmm.npz"
+    model_path.touch()
     monkeypatch.setattr(benchmark, "_warp_factor", lambda pair: 1.0)
 
     pairs = benchmark._heldout_pairs(recordings)
 
     assert pairs
+    assert {pair.reference.recording_id for pair in pairs} == {"r2"}
     assert {int(pair.query.recording_id[1:]) for pair in pairs} == {7, 8, 9}
     assert all(pair.reference.recording_id != pair.query.recording_id for pair in pairs)
+    assert {pair.reference.metadata["model_path"] for pair in pairs} == {str(model_path)}
 
 
 def test_hmm_train70_alignment_uses_existing_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
