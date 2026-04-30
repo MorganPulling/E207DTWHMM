@@ -315,7 +315,7 @@ def StepStreamingDTW(
         # Now, we factor in the HMM weight to the cost of this frame. We decrease the cost of frames where 
         # ViterbiNormalizedLogProbs is high (this is not exactly what we discussed, but it accomplishes something similar).
         # NOTE: This version of StreamingDTW needs transtion weighting to normalize cost by path length
-        HMMAdjustedLocalCost = LocalCost - HMMWeight * ViterbiNormalizedLogProbs[RefFrame]
+        HMMAdjustedLocalCost = LocalCost + HMMWeight * -(ViterbiNormalizedLogProbs[RefFrame])
 
         # What was the cost of the last row at the previous reference frame?
         DiagonalPredecessorCost = (RunningState.PreviousRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
@@ -393,9 +393,7 @@ def InitializeHMMStreamingDTW(
     TransitionMatrix: np.ndarray,
     InitialDistribution: np.ndarray,
     Means: list,
-    Covars: list,
-    SearchHalfWidth: int = 50,
-    HMMWeight: float = 0.1
+    Covars: list
 ) -> tuple[HMMParameters, ViterbiRunningState, StreamingDTWRunningState]:
     """
     Initializes all state required to run the online HMM-StreamingDTW aligner.
