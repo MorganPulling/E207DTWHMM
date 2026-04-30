@@ -2,11 +2,11 @@ import numpy as np
 import ExtractObservations
 
 
-def MakeInitialDistribution(ReferenceLengthFrames):
+def MakeInitialDistribution(ReferenceLengthFrames: int):
     """
-    Makes an initial distribution assmuing that the reference starts in its first audio frame
+    Makes an initial distribution assmuing that the reference starts in it first audio frame
     """
-    InitialDistribution = np.zeros((1, ReferenceLengthFrames))
+    InitialDistribution = np.zeros(ReferenceLengthFrames)
 
     # We guarantee a start in the first state, which is just the first reference frame
     InitialDistribution[0] = 1;
