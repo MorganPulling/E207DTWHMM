@@ -79,7 +79,7 @@ class StreamingDTWRunningState:
     Fields:
         - PreviousRowCosts:         (RefFrameCount,) accumulated DTW costs across all reference
                                     frames for the most recently processed query frame (row Q - 1)
-        - CurrentReferenceEstimate: index of the reference frame with minimum
+        - CurrentReferenceEstimate: index of the reference frame with minimum path-length-normalized
                                     accumulated cost at the current query position
         - CurrentQueryFrameIndex:   how many query frames have been processed - 1
     """
@@ -229,9 +229,9 @@ def InitializeStreamingDTW(RefFrameCount: int) -> StreamingDTWRunningState:
     PreviousRowCosts[0] = 0.0
 
     return StreamingDTWRunningState(
-        PreviousRowCosts=PreviousRowCosts,
-        CurrentReferenceEstimate=0,
-        CurrentQueryFrameIndex=0
+        PreviousRowCosts = PreviousRowCosts,
+        CurrentReferenceEstimate = 0,
+        CurrentQueryFrameIndex = 0
     )
 
 
@@ -264,72 +264,71 @@ def StepStreamingDTW(
     by the current Viterbi state distribution.
 
     For each reference frame r in the active window the adjusted cell cost is:
-        AdjustedCost(r) = ChromaDistance(ref[r], query) - HMMWeight * ViterbiLogProb[r]
+        AdjustedCost(r) = ChromaCosineDistance(ref[r], query) - HMMWeight * ViterbiLogProb[r]
     so reference frames the HMM considers likely incur a lower alignment cost,
     steering the warping path toward HMM-consistent positions.
 
-    The DTW recurrence then selects the cheapest predecessor among:
+    The DTW then selects the cheapest predecessor between:
         diagonal  (t-1, r-1) : both query and reference advance
         above     (t-1, r  ) : query advances, reference stays
         left      (t,   r-1) : reference advances, query stays (built left-to-right)
+
+    The search window is centered on the HMM's best state estimate (argmax of ViterbiNormalizedLogProbs)
+    rather than the previous DTW estimate.
+
+    Accumulated costs are normalized by path length before selecting a NewReferenceEstimate,
+    so that longer paths are not unfairly penalized relative to shorter ones.
 
     Parameters:
         - RunningState:               current StreamingDTW state
         - ReferenceChroma:            (FeatureDim, RefFrameCount) reference feature matrix
         - NewQueryFrame:              (FeatureDim,) current query chroma vector
         - ViterbiNormalizedLogProbs:  (StateCount,) normalized log-probs from the current Viterbi step
-        - SearchHalfWidth:            half-width of the active window around CurrentReferenceEstimate
+        - SearchHalfWidth:            half-width of the active window around the HMM MAP state
         - HMMWeight:                  scaling factor for the Viterbi cost bias (0 = pure DTW)
     Returns:
-        - Updated StreamingDTWRunningState with new row costs and reference frame estimate
+        - Updated StreamingDTWRunningState with new row costs, path lengths, and reference frame estimate
     """
-    RefFrameCount = ReferenceChroma.shape[1]
+    ReferenceFrameCount = ReferenceChroma.shape[1]
 
-    # This imposes a global constraint (like Sakoe-Chiba) so we don't use as much memory when running StreamingDTW
-    WindowStart = max(0, RunningState.CurrentReferenceEstimate - SearchHalfWidth)
-    WindowEnd = min(RefFrameCount, RunningState.CurrentReferenceEstimate + SearchHalfWidth + 1)
+    # Center the search window on the HMM estimated state. We assume Viterbi is a semi-accurate, 
+    # so let's search around its estimate.
+    HMMMapState = int(np.argmax(ViterbiNormalizedLogProbs))
+    WindowStart = max(0, HMMMapState - SearchHalfWidth)
+    WindowEnd = min(ReferenceFrameCount, HMMMapState + SearchHalfWidth + 1)
 
-    # Initialize current query row at infinite cost (we want un-reached entries to never be hit). Let's find a way
-    # to avoid initializing an array that's the full width of the reference recording.
-    CurrentRowCosts = np.full(RefFrameCount, np.inf)
+    CurrentRowCosts = np.full(ReferenceFrameCount, np.inf)
+    CurrentPathLengths = np.full(ReferenceFrameCount, np.inf)
 
-    for RefFrame in range(WindowStart, WindowEnd):
-        LocalCost = ComputeChromaCosineDistance(ReferenceChroma[:, RefFrame], NewQueryFrame)
+    for ReferenceFrame in range(WindowStart, WindowEnd):
+        LocalCost = ComputeChromaCosineDistance(ReferenceChroma[:, ReferenceFrame], NewQueryFrame)
 
-        # Now, we factor in the HMM weight to the cost of this frame. We decrease the cost of frames where 
-        # ViterbiNormalizedLogProbs is high (this is not exactly what we discussed, but it accomplishes something similar).
-        # NOTE: This version of StreamingDTW needs transtion weighting to normalize cost by path length
-        HMMAdjustedLocalCost = LocalCost - HMMWeight * ViterbiNormalizedLogProbs[RefFrame]
+        # -ViterbiNormalizedLogProbs[RefFrame] >= 0 always, so likely states (log-prob near 0)
+        # incur little extra cost while unlikely states are penalized.
+        HMMAdjustedLocalCost = LocalCost + HMMWeight * (-ViterbiNormalizedLogProbs[ReferenceFrame])
 
-        # What was the cost of the last row at the previous reference frame?
-        DiagonalPredecessorCost = (RunningState.PreviousRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
+        DiagonalPredecessorCost = RunningState.PreviousRowCosts[ReferenceFrame - 1] if ReferenceFrame > 0 else np.inf
+        VerticalPredecessorCost = RunningState.PreviousRowCosts[ReferenceFrame]
+        HorizontalPredecessorCost = CurrentRowCosts[ReferenceFrame - 1] if ReferenceFrame > 0 else np.inf
 
-        # What was the cost of the last row at the current reference frame?
-        VerticalPredecessorCost = RunningState.PreviousRowCosts[RefFrame]
+        PredecessorCosts = [DiagonalPredecessorCost, VerticalPredecessorCost, HorizontalPredecessorCost]
+        BestPredecessorIndex = int(np.argmin(PredecessorCosts))
 
-        # What is the cost of the current row at the previous reference frame?
-        HorizontalPredecessorCost = (CurrentRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
+        CurrentRowCosts[ReferenceFrame] = HMMAdjustedLocalCost + PredecessorCosts[BestPredecessorIndex]
 
-        # Again, this is not exactly what we discussed. What's happening here is that HMM is weighting the cosine distance, so
-        # we're using a method that statically weights Viterbi and StreamingDTW against each other. We'd like to weight transitions based
-        # on how well they achieve the state outlined by the HMM (this has its own faults, however).
-        CurrentRowCosts[RefFrame] = HMMAdjustedLocalCost + min(
-            DiagonalPredecessorCost,
-            VerticalPredecessorCost,
-            HorizontalPredecessorCost
-        )
-
-    # Grab only the costs within the window
     WindowCosts = CurrentRowCosts[WindowStart:WindowEnd]
+    WindowPathLengths = CurrentPathLengths[WindowStart:WindowEnd]
 
-    # Create a new reference estimate based on the lowest-cost frame
-    NewReferenceEstimate = WindowStart + int(np.argmin(WindowCosts))
+    # Normalize by path length so longer accumulated-cost paths aren't unfairly penalized
+    # relative to shorter ones when picking the best reference position estimate.
+    # Ensure that we don't divide by a negative number or 0 (just in case).
+    NormalizedWindowCosts = WindowCosts / np.maximum(WindowPathLengths, 1.0)
+    NewReferenceEstimate = WindowStart + int(np.argmin(NormalizedWindowCosts))
 
-    # Update the StreamingDTW state
     return StreamingDTWRunningState(
         PreviousRowCosts = CurrentRowCosts,
         CurrentReferenceEstimate = NewReferenceEstimate,
-        CurrentQueryFrameIndex =  RunningState.CurrentQueryFrameIndex + 1
+        CurrentQueryFrameIndex = RunningState.CurrentQueryFrameIndex + 1
     )
 
 def ProcessNextFrame(
@@ -337,7 +336,7 @@ def ProcessNextFrame(
     StreamingDTWState: StreamingDTWRunningState,
     HMM: HMMParameters,
     ReferenceChroma: np.ndarray,
-    NewQueryFrame: np.ndarray,
+    NewQueryChroma: np.ndarray,
     SearchHalfWidth: int,
     HMMWeight: float
 ) -> tuple[int, ViterbiRunningState, StreamingDTWRunningState]:
@@ -352,7 +351,7 @@ def ProcessNextFrame(
         - StreamingDTWState:       current running StreamingDTW state
         - HMM:             preprocessed HMM parameters
         - ReferenceChroma: (FeatureDim, RefFrameCount) reference feature matrix
-        - NewQueryFrame:   (FeatureDim,) current query chroma vector
+        - NewQueryChroma:   (FeatureDim,) current query chroma vector
         - SearchHalfWidth: half-width of the StreamingDTW active window in frames
         - HMMWeight:       scaling factor for the Viterbi cost bias
     Returns:
@@ -360,11 +359,11 @@ def ProcessNextFrame(
         - UpdatedViterbiState
         - UpdatedStreamingDTWState
     """
-    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame)
+    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryChroma)
     UpdatedStreamingDTWState = StepStreamingDTW(
         StreamingDTWState,
         ReferenceChroma,
-        NewQueryFrame,
+        NewQueryChroma,
         UpdatedViterbiState.NormalizedLogProbabilities,
         SearchHalfWidth,
         HMMWeight
