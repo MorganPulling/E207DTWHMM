@@ -163,12 +163,27 @@ def InitializeViterbi(InitialDistribution: np.ndarray) -> ViterbiRunningState:
 
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogPi, CurrentReferenceEstimate = 0)
 
+def MakeWindowCenter(
+    QueryIndex: int,
+    QueryFrameCount: int,
+    ReferenceFrameCount: int,
+) -> int:
+    """
+    Determines a global window center point for Viterbi windowing.
+    """
+    if QueryFrameCount <= 1:
+        return 0
+
+    QueryProgress = QueryIndex / (QueryFrameCount - 1)
+
+    # Simply, how far are we through the query? Estimate that we've made the same progress through the reference.
+    return int(round(QueryProgress * (ReferenceFrameCount - 1)))
 
 def StepViterbi(
     RunningState: ViterbiRunningState,
     HMM: HMMParameters,
     NewObservation: np.ndarray,
-    SearchHalfWidth: int,
+    WindowHalfWidth: int
 ) -> ViterbiRunningState:
     """
     Advances the Viterbi run by one observation frame.
@@ -182,45 +197,68 @@ def StepViterbi(
         - RunningState:  current Viterbi state (just the log probabilites of each current referece frame)
         - HMM:           preprocessed HMM parameters
         - NewObservation: (FeatureDim,) current query chroma vector
+        - WindowHalfWdith: THe number of frames around the current estimate to search for the next state.
     Returns:
         - Updated ViterbiRunningState
     """
     ReferenceFrameCount = HMM.StateCount
-    # Determine the log probability of the current observation for each state
+
+    # For performance reasons, let's only consider a range around the current reference estimate.
+    # We shouldn't need a global window since our state transitions are limited by the training
+    # DTW transitions.
+    WindowCenter = RunningState.CurrentReferenceEstimate
+    WindowCenter = int(np.clip(WindowCenter, 0, ReferenceFrameCount - 1))
+
+    # Only states in the window are currently possible
+    WindowStart = max(0, WindowCenter - WindowHalfWidth)
+    WindowEnd = min(ReferenceFrameCount, WindowCenter + WindowHalfWidth + 1)
+    CurrentPossibleStates = np.arange(WindowStart, WindowEnd)
+
+    # flatnonzero returns indices where the argument, flattened, has nonzero values. So, with this line,
+    # we find indices where the NormalizedLogProbabilities are not +-infty (i.e., where transitions can be taken)
+    PossiblePreviousStates = np.flatnonzero(np.isfinite(RunningState.NormalizedLogProbabilities))
+
+    # If no previous states were possible, let's consider the current state as a fallback state. 
+    # This will ruin the alignment path, but does prevent errors.
+    if len(PossiblePreviousStates) == 0 and (WindowCenter is not None) :
+        PossiblePreviousStates = np.array([WindowCenter])
+
+    # Determine the log probability of the current observation for each current possible state
     LogEmissions = np.array([
         ComputeLogGaussianEmission(
             NewObservation,
-            HMM.Means[StateIndex],
-            HMM.CovarianceInverses[StateIndex],
-            HMM.LogCovarianceDeterminants[StateIndex]
+            HMM.Means[State],
+            HMM.CovarianceInverses[State],
+            HMM.LogCovarianceDeterminants[State]
         )
-        for StateIndex in range(ReferenceFrameCount)
+        for State in CurrentPossibleStates
     ])
 
-    # This imposes a global constraint (like Sakoe-Chiba) so we don't make large jumps to states far beyond the current estimate
-    WindowStart = max(0, RunningState.CurrentReferenceEstimate - SearchHalfWidth)
-    WindowEnd = min(ReferenceFrameCount, RunningState.CurrentReferenceEstimate + SearchHalfWidth + 1)
+    # Find the log probabilities of all states we could have come from
+    PreviousLogProbabilities = RunningState.NormalizedLogProbabilities[PossiblePreviousStates]
 
-    # Shape (StateCount, StateCount): row j = log_prob[i] + log A[i, j] for all j
-    # In words: adds the log probability of each state (given last observation) 
-    # from Viterbi to the log probability of transitioning from that state to any other state.
-    LogJointFromAllPredecessors = RunningState.NormalizedLogProbabilities[:, np.newaxis] + HMM.LogTransitionMatrix
+    # Build a reduced transition matrix so that we only take possible transitions. np.ix_ creates 
+    # an array of indices at which we find the values of the LogTransitionMatrix such that each PossiblePreviousState 
+    # is considered for each CurrentPossibleState.
+    PossibleTransitionMatrix = HMM.LogTransitionMatrix[np.ix_(PossiblePreviousStates, CurrentPossibleStates)]
 
-    # What's the highest-probability of the last state?
-    BestPredecessorLogProbabilities = LogJointFromAllPredecessors.max(axis = 0)  # (StateCount,)
+    # Take the previous log probabilities and turn them into a column vector. Then, add that vector to each column of the 
+    # state transition matrix and take the max. This finds the best probability after combining the possible previous log
+    # probabilities with corresponding possible transtions.
+    BestPredecessorLogProbabilities = (PreviousLogProbabilities[:, np.newaxis] + PossibleTransitionMatrix).max(axis = 0)
 
-    # Add the probability of going to state j and the probability that the current observation
-    # corresponds to state j
-    RawLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProbabilities
+    # We didn't consider emission probabilities before because they only depend on the state, so they're a constant factor 
+    # inside the max(). Let's account for them now to consider them in cumulative probability. 
+    RawCurrentLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProbabilities
 
-    # Apply the window constraint before normalization so that out-of-window states
-    # cannot accumulate probability and de-track future Viterbi steps.
-    WindowedLogProbabilities = np.full(ReferenceFrameCount, -np.inf)
-    WindowedLogProbabilities[WindowStart:WindowEnd] = RawLogProbabilities[WindowStart:WindowEnd]
+    # Normalize to create a valid PDF (logsumexp correctly ignores -inf entries). First, initialize the normalized probabilities
+    # to -infty so that states we couldn't reach are still unreachable.
+    NormalizedLogProbabilities = np.full(ReferenceFrameCount, -np.inf)
 
-    # Normalize over only the valid window entries (logsumexp correctly ignores -inf entries)
-    NormalizedLogProbabilities = WindowedLogProbabilities - logsumexp(WindowedLogProbabilities)
+    # See InitializeViterbi for what we're doing here
+    NormalizedLogProbabilities[CurrentPossibleStates] = RawCurrentLogProbabilities - logsumexp(RawCurrentLogProbabilities)
 
+    # Our best-estimate state is the one with the highest probability
     NewReferenceEstimate = int(np.argmax(NormalizedLogProbabilities))
 
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities, CurrentReferenceEstimate = NewReferenceEstimate)
@@ -362,6 +400,7 @@ def ProcessNextFrame(
         - UpdatedViterbiState
         - UpdatedStreamingDTWState
     """
+
     UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame, SearchHalfWidth)
     UpdatedStreamingDTWState = StepStreamingDTW(
         StreamingDTWState,
@@ -373,9 +412,7 @@ def ProcessNextFrame(
     StreamingDTWEstimate = UpdatedStreamingDTWState.CurrentReferenceEstimate
     ViterbiEstimate = UpdatedViterbiState.CurrentReferenceEstimate
 
-
     WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * (ViterbiEstimate - StreamingDTWEstimate))
-
 
     return WeightedMidpointState, UpdatedViterbiState, UpdatedStreamingDTWState
 

@@ -3,7 +3,7 @@ import numpy as np
 DEFAULT_SAMPLE_RATE = 22050
 DEFAULT_HOP_SIZE_SAMPLES = 512
 
-LAMBDA = .5
+LAMBDA = 1
 
 TRAINING_TRANSTIONS = np.array([[0, 1], [1, 1], [1, 0]])
 
