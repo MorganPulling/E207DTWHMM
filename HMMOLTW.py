@@ -288,9 +288,7 @@ def StepStreamingDTW(
         - RunningState:               current StreamingDTW state
         - ReferenceChroma:            (FeatureDim, RefFrameCount) reference feature matrix
         - NewQueryFrame:              (FeatureDim,) current query chroma vector
-        - ViterbiNormalizedLogProbs:  (StateCount,) normalized log-probs from the current Viterbi step
         - SearchHalfWidth:            half-width of the active window around CurrentReferenceEstimate
-        - HMMWeight:                  scaling factor for the Viterbi cost bias (0 = pure DTW)
     Returns:
         - Updated StreamingDTWRunningState with new row costs and reference frame estimate
     """
@@ -377,11 +375,9 @@ def ProcessNextFrame(
     StreamingDTWEstimate = UpdatedStreamingDTWState.CurrentReferenceEstimate
     ViterbiEstimate = UpdatedViterbiState.CurrentReferenceEstimate
 
-<<<<<<< HEAD
-    WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * ViterbiEstimate)
-=======
-    WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * ViterbiEstimate) // 2
->>>>>>> 4c2b110bf58d1dbddc49bd1a36ea813a51ce996b
+
+    WeightedMidpointState = int(StreamingDTWEstimate + HMMWeight * (ViterbiEstimate - StreamingDTWEstimate))
+
 
     return WeightedMidpointState, UpdatedViterbiState, UpdatedStreamingDTWState
 
