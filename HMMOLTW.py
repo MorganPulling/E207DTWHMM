@@ -209,6 +209,7 @@ def StepViterbi(
     WindowCenter = RunningState.CurrentReferenceEstimate
     WindowCenter = int(np.clip(WindowCenter, 0, ReferenceFrameCount - 1))
 
+
     # Only states in the window are currently possible. Let's only look forward from the current estimate.
     WindowStart = max(0, WindowCenter)
     WindowEnd = min(ReferenceFrameCount, WindowCenter + WindowHalfWidth + 1)
@@ -223,7 +224,7 @@ def StepViterbi(
     if len(PossiblePreviousStates) == 0 and (WindowCenter is not None) :
         PossiblePreviousStates = np.array([WindowCenter])
 
-    # Determine the log probability of the current observation for each current possible state
+    # Determine the log probability of the current observation given each current possible state
     LogEmissions = np.array([
         ComputeLogGaussianEmission(
             NewObservation,
@@ -234,7 +235,7 @@ def StepViterbi(
         for State in CurrentPossibleStates
     ])
 
-    # Find the log probabilities of all states we could have come from
+    # Find the log probabilities of all states (frames) we could have come from in the reference at the previous query frame
     PreviousLogProbabilities = RunningState.NormalizedLogProbabilities[PossiblePreviousStates]
 
     # Build a reduced transition matrix so that we only take possible transitions. np.ix_ creates 
@@ -245,6 +246,7 @@ def StepViterbi(
     # Take the previous log probabilities and turn them into a column vector. Then, add that vector to each column of the 
     # state transition matrix and take the max. This finds the best probability after combining the possible previous log
     # probabilities with corresponding possible transtions.
+    # np.newaxis creates a new dimension in the array, turning the shape from (PreviousStateCount,) to (PreviousStateCount, 1).
     BestPredecessorLogProbabilities = (PreviousLogProbabilities[:, np.newaxis] + PossibleTransitionMatrix).max(axis = 0)
 
     # We didn't consider emission probabilities before because they only depend on the state, so they're a constant factor 
@@ -252,14 +254,16 @@ def StepViterbi(
     RawCurrentLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProbabilities
 
     # Normalize to create a valid PDF (logsumexp correctly ignores -inf entries). First, initialize the normalized probabilities
-    # to -infty so that states we couldn't reach are still unreachable.
+    # to -infinity so that states we couldn't reach are still unreachable.
     NormalizedLogProbabilities = np.full(ReferenceFrameCount, -np.inf)
 
     # See InitializeViterbi for what we're doing here
+    #Taking log sum of the exp of raw log probabilities gives us the log of the sum of the probabilities, essentially normalizing the probabilities in log space
     NormalizedLogProbabilities[CurrentPossibleStates] = RawCurrentLogProbabilities - logsumexp(RawCurrentLogProbabilities)
 
-    # Our best-estimate state is the one with the highest probability
-    NewReferenceEstimate = int(np.argmax(NormalizedLogProbabilities))
+    # Our best-estimate state is the one with the highest probability 
+    #argmax reutrns the index of the max value in the array whihc is then our most probable next state
+    NewReferenceEstimate = int(np.argmax(NormalizedLogProbabilities)) + WindowStart
 
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogProbabilities, CurrentReferenceEstimate = NewReferenceEstimate)
 
