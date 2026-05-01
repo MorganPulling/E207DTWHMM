@@ -220,8 +220,8 @@ def StepViterbi(
 
     # If no previous states were possible, let's consider the current state as a fallback state. 
     # This will ruin the alignment path, but does prevent errors.
-    if len(PossiblePreviousStates) == 0 and (WindowCenter is not None) :
-        PossiblePreviousStates = np.array([WindowCenter])
+    # if len(PossiblePreviousStates) == 0 and (WindowCenter is not None) :
+    #    PossiblePreviousStates = np.array([WindowCenter])
 
     # Determine the log probability of the current observation for each current possible state
     LogEmissions = np.array([

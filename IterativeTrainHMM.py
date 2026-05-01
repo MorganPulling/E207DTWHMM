@@ -34,9 +34,10 @@ def UpdateHMMParameters(
     QueryFrameSequence = NewBacktracePath[:, 1]
 
     # A transition is counted only at DTW steps where the query frame increments by 1.
-    # QueryIncrements = np.diff(QueryFrameSequence) == 1
-    FromStates = ReferenceFrameSequence[:-1] # [QueryIncrements]
-    ToStates = ReferenceFrameSequence[1:] # [QueryIncrements]
+    QueryIncrements = np.diff(QueryFrameSequence) == 1
+    ToStates = ReferenceFrameSequence[1:][QueryIncrements]
+    FromStates = np.roll(ToStates, 1)
+    FromStates[0] = ReferenceFrameSequence[0]
     
     # Add transition counts. The caller row-normalizes to get probabilities.
     np.add.at(OldTransitionCounts, (FromStates, ToStates), 1)
