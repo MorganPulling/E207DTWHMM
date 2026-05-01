@@ -209,9 +209,10 @@ def StepViterbi(
     WindowCenter = RunningState.CurrentReferenceEstimate
     WindowCenter = int(np.clip(WindowCenter, 0, ReferenceFrameCount - 1))
 
-    # Only states in the window are currently possible
-    WindowStart = max(0, WindowCenter - WindowHalfWidth)
-    WindowEnd = min(ReferenceFrameCount, WindowCenter + WindowHalfWidth + 1)
+    # Only states in the window are currently possible. Let's only look forward from the current estimate.
+    WindowStart = max(0, WindowCenter)
+    # WindowEnd = min(ReferenceFrameCount, WindowCenter + WindowHalfWidth + 1)
+    WindowEnd = ReferenceFrameCount
     CurrentPossibleStates = np.arange(WindowStart, WindowEnd)
 
     # flatnonzero returns indices where the argument, flattened, has nonzero values. So, with this line,
