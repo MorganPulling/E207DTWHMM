@@ -417,8 +417,8 @@ def StepHMMInfluencedDTW(
 
         # Now, we factor in the HMM weight to the cost of this frame. We decrease the cost of frames where 
         # ViterbiNormalizedLogProbs is high (this is not exactly what we discussed, but it accomplishes something similar).
-        # NOTE: This version of StreamingDTW needs transtion weighting to normalize cost by path length
-        HMMAdjustedLocalCost = LocalCost - HMMWeight * ViterbiNormalizedLogProbs[RefFrame]
+        # The normalized log probabilities are exponentiated to return them to linear probabilities in the range [0,1]
+        HMMAdjustedLocalCost = LocalCost - HMMWeight * np.exp(ViterbiNormalizedLogProbs[RefFrame])
 
         # What was the cost of the last row at the previous reference frame?
         DiagonalPredecessorCost = (RunningState.PreviousRowCosts[RefFrame - 1] if RefFrame > 0 else np.inf)
@@ -493,7 +493,7 @@ def ProcessNextHMMInfluencedFrame(
     return UpdatedStreamingDTWState.CurrentReferenceEstimate, UpdatedViterbiState, UpdatedStreamingDTWState
 
 
-def ProcessNextFrame(
+def ProcessNextHMMBlendedFrame(
     ViterbiState: ViterbiRunningState,
     StreamingDTWState: StreamingDTWRunningState,
     HMM: HMMParameters,
