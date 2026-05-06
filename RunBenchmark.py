@@ -108,7 +108,7 @@ def RunOfflineDTW(
     **_,
 ) -> np.ndarray:
     _, WarpingPath = librosa.sequence.dtw(
-        X = ReferenceChroma, Y = QueryChroma, backtrack = True, global_constraints = True, band_rad = 0.2 
+        X = ReferenceChroma, Y = QueryChroma, backtrack = True
     )
     return PathToQueryReferenceFrameSeries(WarpingPath[::-1], QueryChroma.shape[1])
 
