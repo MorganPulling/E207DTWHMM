@@ -5,6 +5,7 @@ import librosa
 import matplotlib.pyplot as plt
 import numpy as np
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 import Constants
 import HMMOLTW
@@ -409,18 +410,22 @@ def BenchmarkPiece(PieceDir: Path, JobCount: int = -1) -> Optional[tuple[str, li
     )
 
     print(f"[{PieceName}] Evaluating {len(HeldOutRecordingPaths)} held-out recordings with {JobCount} job(s)...")
-    RawResults = Parallel(n_jobs = JobCount, backend = "loky", verbose = 10)(
-        delayed(EvaluateHeldOutRecording)(
-            QueryRecordingPath,
-            ReferenceChroma,
-            ReferenceBeatTimestamps,
-            ReferenceDurationSeconds,
-            PreprocessedHMM,
-            TrainedHMM.InitialDistribution,
-        )
-        for QueryRecordingPath in HeldOutRecordingPaths
-    )
-    Results = [R for R in RawResults if R is not None]
+    RawResults = list(tqdm(
+        Parallel(n_jobs=JobCount, backend="loky", return_as="generator")(
+            delayed(EvaluateHeldOutRecording)(
+                QueryRecordingPath,
+                ReferenceChroma,
+                ReferenceBeatTimestamps,
+                ReferenceDurationSeconds,
+                PreprocessedHMM,
+                TrainedHMM.InitialDistribution,
+            )
+            for QueryRecordingPath in HeldOutRecordingPaths
+        ),
+        total=len(HeldOutRecordingPaths),
+        desc=PieceName,
+    ))
+    Results = [Result for Result in RawResults if Result is not None]
     return PieceName, Results
 
 
