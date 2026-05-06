@@ -63,7 +63,7 @@ for piece in "${pieces[@]}"; do
     fi
 
     echo "--- $piece reference index $ref_idx ---"
-    "$PYTHON_BIN" -m scripts/train_hmm.py \
+    "$PYTHON_BIN" -m scripts.train_hmm \
       --piece "$piece" \
       --data-root "$DATA_ROOT" \
       --reference-index "$ref_idx" \

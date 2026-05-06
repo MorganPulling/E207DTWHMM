@@ -1,0 +1,2 @@
+method_name,piece,num_pairs,mean_mae_s,median_mae_s,mean_rmse_s,mean_p95_abs_error_s,mean_within_100ms,mean_within_200ms
+hmm_train70,Chopin_Op030No2,363,1.344433493995068,0.20483949915993893,1.840557414853774,3.4513861118732136,0.5069584207596455,0.618821279207525
