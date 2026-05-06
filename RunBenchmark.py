@@ -333,7 +333,7 @@ def PlotPieceResults(PieceName: str, Results: list[dict], PlotsDir: Path) -> Non
     OutputPath = PlotsDir / f"{PieceName}_error.png"
     Fig.savefig(str(OutputPath), dpi = 150)
     plt.close(Fig)
-    print(f"  Plot saved → {OutputPath}")
+    print(f"  Plot saved -> {OutputPath}")
 
 
 def PlotSummaryResults(AllPieceResults: dict[str, list[dict]], PlotsDir: Path) -> None:
@@ -361,7 +361,7 @@ def PlotSummaryResults(AllPieceResults: dict[str, list[dict]], PlotsDir: Path) -
     OutputPath = PlotsDir / "summary_error.png"
     Fig.savefig(str(OutputPath), dpi = 150)
     plt.close(Fig)
-    print(f"Summary plot saved → {OutputPath}")
+    print(f"Summary plot saved -> {OutputPath}")
 
 
 # ── Per-piece benchmark ───────────────────────────────────────────────────────
