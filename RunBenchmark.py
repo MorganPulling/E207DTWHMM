@@ -363,7 +363,7 @@ def PlotSummaryResults(AllPieceResults: dict[str, list[dict]], PlotsDir: Path) -
     Ax.set_xticks(XPositions)
     Ax.set_xticklabels(ShortPieceNames, rotation = 15, ha = "right")
     Ax.set_ylabel("Mean Absolute Error (% of reference duration)")
-    Ax.set_title("Mean Alignment Error Across Held-Out Recordings — All Pieces")
+    Ax.set_title("Mean Alignment Error Across Held-Out Recordings - All Pieces")
     Ax.legend(loc = "upper right", fontsize = 8)
     Ax.grid(axis = "y", alpha = 0.3)
 
@@ -415,7 +415,7 @@ def PlotAlignmentPaths(
     ShortName = RecordingName.replace(f"{PieceName}_", "")
     Ax.set_xlabel("Reference time (s)")
     Ax.set_ylabel("Query time (s)")
-    Ax.set_title(f"Alignment Paths — {ShortName}")
+    Ax.set_title(f"Alignment Paths - {ShortName}")
     Ax.legend(fontsize = 8)
     Ax.grid(alpha = 0.25)
 
@@ -424,7 +424,7 @@ def PlotAlignmentPaths(
     OutputPath = OutputDir / f"{RecordingName}.png"
     Fig.savefig(str(OutputPath), dpi = 150)
     plt.close(Fig)
-    print(f"  Alignment path saved → {OutputPath}")
+    print(f"  Alignment path saved -> {OutputPath}")
 
 
 # ── Per-piece benchmark ───────────────────────────────────────────────────────
