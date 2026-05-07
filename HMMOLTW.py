@@ -37,6 +37,20 @@ def ComputeLogGaussianEmission(
     return -0.5 * (FeatureDim * np.log(2 * np.pi) + LogCovarianceDeterminant + MahalanobisSquared)
 
 
+def LogPositiveOrNegativeInfinity(Values: np.ndarray) -> np.ndarray:
+    """
+    Computes log(x) for positive entries and -inf for zero or negative entries.
+
+    np.where(condition, np.log(values), -np.inf) still evaluates np.log(values)
+    for every entry, so zeros produce RuntimeWarnings even though they are later
+    replaced. The masked ufunc form avoids evaluating log at impossible entries.
+    """
+    Values = np.asarray(Values, dtype = float)
+    LogValues = np.full(Values.shape, -np.inf, dtype = float)
+    np.log(Values, out = LogValues, where = Values > 0)
+    return LogValues
+
+
 @dataclass
 class HMMParameters:
     """
@@ -48,16 +62,27 @@ class HMMParameters:
 
     Fields:
         - LogTransitionMatrix:        (StateCount, StateCount) log A[i,j] = log P(j | i)
-        - Means:                      list of (FeatureDim,) per-state emission mean vectors
-        - CovarianceInverses:         list of (FeatureDim, FeatureDim) precomputed inverses
+        - Means:                      (StateCount, FeatureDim) per-state emission mean vectors
+        - CovarianceInverses:         (StateCount, FeatureDim, FeatureDim) precomputed inverses
         - LogCovarianceDeterminants:  (StateCount,) log |Covariance_i| per state
+        - LogEmissionConstants:       (StateCount,) constant part of each Gaussian log emission
+        - TransitionDestinations:     per-state arrays of reachable transition destinations
         - StateCount:                 number of HMM states (= number of reference frames)
     """
     LogTransitionMatrix: np.ndarray
-    Means: list
-    CovarianceInverses: list
+    Means: np.ndarray
+    CovarianceInverses: np.ndarray
     LogCovarianceDeterminants: np.ndarray
+    LogEmissionConstants: np.ndarray
+    TransitionDestinations: list
     StateCount: int
+
+
+def NormalizeLogProbabilities(LogProbabilities: np.ndarray) -> np.ndarray:
+    Normalizer = logsumexp(LogProbabilities)
+    if not np.isfinite(Normalizer):
+        return LogProbabilities.copy()
+    return LogProbabilities - Normalizer
 
 
 @dataclass
@@ -116,12 +141,18 @@ def PreprocessHMMParameters(
         - HMMParameters ready for streaming inference
     """
     StateCount = len(Means)
+    Means = np.asarray(Means, dtype = float)
 
     # Ensure that transitions with negative (impossible) probabilities or zero probabilities are never reached
-    LogTransitionMatrix = np.where(TransitionMatrix > 0, np.log(TransitionMatrix), -np.inf)
+    LogTransitionMatrix = LogPositiveOrNegativeInfinity(TransitionMatrix)
+    TransitionDestinations = [
+        np.flatnonzero(TransitionMatrix[StateIndex] > 0)
+        for StateIndex in range(StateCount)
+    ]
 
     CovarianceInverses = []
     LogCovarianceDeterminants = []
+    LogEmissionConstants = []
 
     for StateIndex in range(StateCount):
         Covariance = Covars[StateIndex]
@@ -131,12 +162,15 @@ def PreprocessHMMParameters(
         CovarianceInverses.append(inv(RegularizedCovariance))
         _, LogDet = slogdet(RegularizedCovariance)
         LogCovarianceDeterminants.append(LogDet)
+        LogEmissionConstants.append(-0.5 * (FeatureDim * np.log(2 * np.pi) + LogDet))
 
     return HMMParameters(
         LogTransitionMatrix = LogTransitionMatrix,
         Means = Means,
-        CovarianceInverses = CovarianceInverses,
+        CovarianceInverses = np.array(CovarianceInverses),
         LogCovarianceDeterminants = np.array(LogCovarianceDeterminants),
+        LogEmissionConstants = np.array(LogEmissionConstants),
+        TransitionDestinations = TransitionDestinations,
         StateCount = StateCount
     )
 
@@ -152,14 +186,11 @@ def InitializeViterbi(InitialDistribution: np.ndarray) -> ViterbiRunningState:
     """
     PiFlat = np.array(InitialDistribution).flatten().astype(float)
 
-    LogPi = np.where(PiFlat > 0, np.log(PiFlat), -np.inf)
+    LogPi = LogPositiveOrNegativeInfinity(PiFlat)
 
-    # This isn't needed in the case that the initial distribution sums to 1, 
-    # but we offset zero entries by a very small value. We need valid log probabilities,
-    # but they're currently offset. So, we subtract off the log of the sum of the distribution,
-    # which, outside of log-world, is dividing by the sum of the initial distribution, returning
-    # it to a valid distribution with a sum of 1.
-    NormalizedLogPi = LogPi - logsumexp(LogPi)
+    # This is unnecessary when the initial distribution already sums to 1, but
+    # it also handles non-normalized positive entries. Zero entries stay at -inf.
+    NormalizedLogPi = NormalizeLogProbabilities(LogPi)
 
     return ViterbiRunningState(NormalizedLogProbabilities = NormalizedLogPi, CurrentReferenceEstimate = 0)
 
@@ -249,7 +280,7 @@ def StepViterbi(
     NormalizedLogProbabilities = np.full(ReferenceFrameCount, -np.inf)
 
     # See InitializeViterbi for what we're doing here
-    NormalizedLogProbabilities[CurrentPossibleStates] = RawCurrentLogProbabilities - logsumexp(RawCurrentLogProbabilities)
+    NormalizedLogProbabilities[CurrentPossibleStates] = NormalizeLogProbabilities(RawCurrentLogProbabilities)
 
     # Our best-estimate state is the one with the highest probability
     NewReferenceEstimate = int(np.argmax(NormalizedLogProbabilities))
