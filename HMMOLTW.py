@@ -101,6 +101,10 @@ class ViterbiRunningState:
     CurrentReferenceEstimate: int
 
 
+class ViterbiDecodingError(ValueError):
+    """Raised when the online Viterbi decoder loses every reachable state."""
+
+
 @dataclass
 class StreamingDTWRunningState:
     """
@@ -246,6 +250,8 @@ def StepViterbi(
     # flatnonzero returns indices where the argument, flattened, has nonzero values. So, with this line,
     # we find indices where the NormalizedLogProbabilities are not +-infty (i.e., where transitions can be taken)
     PossiblePreviousStates = np.flatnonzero(np.isfinite(RunningState.NormalizedLogProbabilities))
+    if PossiblePreviousStates.size == 0:
+        raise ViterbiDecodingError("Viterbi decoder has no reachable previous states.")
 
     # Determine the log probability of the current observation for each current possible state
     LogEmissions = np.array([
@@ -274,6 +280,10 @@ def StepViterbi(
     # We didn't consider emission probabilities before because they only depend on the state, so they're a constant factor 
     # inside the max(). Let's account for them now to consider them in cumulative probability. 
     RawCurrentLogProbabilities = Constants.LAMBDA * LogEmissions + BestPredecessorLogProbabilities
+    if not np.any(np.isfinite(RawCurrentLogProbabilities)):
+        raise ViterbiDecodingError(
+            "Viterbi decoder has no reachable current states inside the active search window."
+        )
 
     # Normalize to create a valid PDF (logsumexp correctly ignores -inf entries). First, initialize the normalized probabilities
     # to -infty so that states we couldn't reach are still unreachable.

@@ -249,11 +249,19 @@ def BenchmarkOneReference(
     Results = []
     for QueryPathString in HeldOutQueryPathStrings:
         QueryRecordingPath = Path(QueryPathString)
-        Result = EvaluateHMMAlignmentForQuery(
-            QueryRecordingPath,
-            PreprocessedHMM,
-            TrainedHMM.InitialDistribution,
-        )
+        try:
+            Result = EvaluateHMMAlignmentForQuery(
+                QueryRecordingPath,
+                PreprocessedHMM,
+                TrainedHMM.InitialDistribution,
+            )
+        except HMMOLTW.ViterbiDecodingError as Error:
+            print(
+                f"[{PieceName}] Skipping HMM for {ReferenceRecordingName}: "
+                f"Viterbi failed on query {QueryRecordingPath.stem}: {Error}"
+            )
+            return []
+
         if Result is None:
             continue
 
