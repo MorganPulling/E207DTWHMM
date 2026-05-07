@@ -333,7 +333,7 @@ def PlotPieceResults(PieceName: str, Results: list[dict], PlotsDir: Path) -> Non
     Ax.set_xticks(XPositions)
     Ax.set_xticklabels(RecordingLabels, rotation = 30, ha = "right", fontsize = 8)
     Ax.set_ylabel("Mean Absolute Error (% of reference duration)")
-    Ax.set_title(f"Alignment Error on Held-Out Recordings — {PieceName}")
+    Ax.set_title(f"Alignment Error on Held-Out Recordings - {PieceName}")
     Ax.legend(loc = "upper right", fontsize = 8)
     Ax.grid(axis = "y", alpha = 0.3)
 
