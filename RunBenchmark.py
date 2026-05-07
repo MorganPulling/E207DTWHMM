@@ -278,6 +278,7 @@ def EvaluateHeldOutRecording(
 
     SharedKwargs = dict(PreprocessedHMM = PreprocessedHMM, InitialDistribution = InitialDistribution)
     MAEPercents = {}
+    RefFrameEstimates = {}
     for MethodName, Runner in zip(METHOD_NAMES, METHOD_RUNNERS):
         EstimatedRefFrames = Runner(ReferenceChroma, QueryChroma, **SharedKwargs)
         MAEPercents[MethodName] = ComputeMAEPercentAtBeats(
@@ -286,8 +287,15 @@ def EvaluateHeldOutRecording(
             ReferenceBeatTimestamps,
             ReferenceDurationSeconds,
         )
+        RefFrameEstimates[MethodName] = EstimatedRefFrames
 
-    return {"Recording": QueryRecordingPath.stem, **MAEPercents}
+    return {
+        "Recording": QueryRecordingPath.stem,
+        "QueryFrameCount": QueryChroma.shape[1],
+        "QueryBeatTimestamps": QueryBeatTimestamps,
+        **MAEPercents,
+        **{f"{Name}_RefFrames": Frames for Name, Frames in RefFrameEstimates.items()},
+    }
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
@@ -364,9 +372,62 @@ def PlotSummaryResults(AllPieceResults: dict[str, list[dict]], PlotsDir: Path) -
     print(f"Summary plot saved -> {OutputPath}")
 
 
+def PlotAlignmentPaths(
+    PieceName: str,
+    Result: dict,
+    ReferenceBeatTimestamps: np.ndarray,
+    PlotsDir: Path,
+) -> None:
+    """
+    Saves one figure per held-out recording showing the alignment path produced
+    by each of the five methods (reference time on x, query time on y), with
+    the ground-truth beat correspondence overlaid as scatter points.
+    """
+    RecordingName = Result["Recording"]
+    QueryFrameCount = Result["QueryFrameCount"]
+    QueryBeatTimestamps = Result["QueryBeatTimestamps"]
+
+    QueryFrameTimes = librosa.frames_to_time(
+        np.arange(QueryFrameCount),
+        sr=Constants.DEFAULT_SAMPLE_RATE,
+        hop_length=Constants.DEFAULT_HOP_SIZE_SAMPLES,
+    )
+
+    Fig, Ax = plt.subplots(figsize=(13, 5), constrained_layout=True)
+
+    for MethodName, Color in zip(METHOD_NAMES, METHOD_COLORS):
+        ReferenceTimes = librosa.frames_to_time(
+            Result[f"{MethodName}_RefFrames"],
+            sr=Constants.DEFAULT_SAMPLE_RATE,
+            hop_length=Constants.DEFAULT_HOP_SIZE_SAMPLES,
+        )
+        Ax.plot(ReferenceTimes, QueryFrameTimes, label=MethodName, color=Color, linewidth=1.4, alpha=0.85)
+
+    SharedBeatCount = min(len(QueryBeatTimestamps), len(ReferenceBeatTimestamps))
+    Ax.scatter(
+        ReferenceBeatTimestamps[:SharedBeatCount],
+        QueryBeatTimestamps[:SharedBeatCount],
+        color="black", s=10, zorder=5, label="Ground truth beats",
+    )
+
+    ShortName = RecordingName.replace(f"{PieceName}_", "")
+    Ax.set_xlabel("Reference time (s)")
+    Ax.set_ylabel("Query time (s)")
+    Ax.set_title(f"Alignment Paths — {ShortName}")
+    Ax.legend(fontsize=8)
+    Ax.grid(alpha=0.25)
+
+    OutputDir = PlotsDir / "alignment_paths" / PieceName
+    OutputDir.mkdir(parents=True, exist_ok=True)
+    OutputPath = OutputDir / f"{RecordingName}.png"
+    Fig.savefig(str(OutputPath), dpi=150)
+    plt.close(Fig)
+    print(f"  Alignment path saved → {OutputPath}")
+
+
 # ── Per-piece benchmark ───────────────────────────────────────────────────────
 
-def BenchmarkPiece(PieceDir: Path, JobCount: int = -1) -> Optional[tuple[str, list[dict]]]:
+def BenchmarkPiece(PieceDir: Path, JobCount: int = -1) -> Optional[tuple[str, list[dict], np.ndarray]]:
     PieceName = PieceDir.name
     HMMFilePath = TRAINED_HMM_DIR / f"{PieceName}.npz"
 
@@ -426,7 +487,7 @@ def BenchmarkPiece(PieceDir: Path, JobCount: int = -1) -> Optional[tuple[str, li
         desc=PieceName,
     ))
     Results = [Result for Result in RawResults if Result is not None]
-    return PieceName, Results
+    return PieceName, Results, ReferenceBeatTimestamps
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -450,10 +511,12 @@ def Exec_RunBenchmark(
         Outcome = BenchmarkPiece(PieceDir, JobCount)
         if Outcome is None:
             continue
-        PieceName, Results = Outcome
+        PieceName, Results, ReferenceBeatTimestamps = Outcome
         if Results:
             AllPieceResults[PieceName] = Results
             PlotPieceResults(PieceName, Results, PlotsDir)
+            for Result in Results:
+                PlotAlignmentPaths(PieceName, Result, ReferenceBeatTimestamps, PlotsDir)
 
     if AllPieceResults:
         PlotSummaryResults(AllPieceResults, PlotsDir)
