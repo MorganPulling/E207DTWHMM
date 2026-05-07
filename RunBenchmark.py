@@ -68,6 +68,8 @@ def LoadBeatTimestamps(BeatFilePath: Path) -> np.ndarray:
             Line = Line.strip()
             if not Line or Line.startswith("%"):
                 continue
+
+            # Only the start of the timestamp
             BeatTimes.append(float(Line.split()[0]))
     return np.array(BeatTimes)
 
@@ -333,7 +335,7 @@ def PlotPieceResults(PieceName: str, Results: list[dict], PlotsDir: Path) -> Non
     Ax.set_xticks(XPositions)
     Ax.set_xticklabels(RecordingLabels, rotation = 30, ha = "right", fontsize = 8)
     Ax.set_ylabel("Mean Absolute Error (% of reference duration)")
-    Ax.set_title(f"Alignment Error on Held-Out Recordings — {PieceName}")
+    Ax.set_title(f"Alignment Error on Held-Out Recordings - {PieceName}")
     Ax.legend(loc = "upper right", fontsize = 8)
     Ax.grid(axis = "y", alpha = 0.3)
 
@@ -389,38 +391,38 @@ def PlotAlignmentPaths(
 
     QueryFrameTimes = librosa.frames_to_time(
         np.arange(QueryFrameCount),
-        sr=Constants.DEFAULT_SAMPLE_RATE,
-        hop_length=Constants.DEFAULT_HOP_SIZE_SAMPLES,
+        sr = Constants.DEFAULT_SAMPLE_RATE,
+        hop_length = Constants.DEFAULT_HOP_SIZE_SAMPLES,
     )
 
-    Fig, Ax = plt.subplots(figsize=(13, 5), constrained_layout=True)
+    Fig, Ax = plt.subplots(figsize = (13, 5), constrained_layout = True)
 
     for MethodName, Color in zip(METHOD_NAMES, METHOD_COLORS):
         ReferenceTimes = librosa.frames_to_time(
             Result[f"{MethodName}_RefFrames"],
-            sr=Constants.DEFAULT_SAMPLE_RATE,
-            hop_length=Constants.DEFAULT_HOP_SIZE_SAMPLES,
+            sr = Constants.DEFAULT_SAMPLE_RATE,
+            hop_length = Constants.DEFAULT_HOP_SIZE_SAMPLES,
         )
-        Ax.plot(ReferenceTimes, QueryFrameTimes, label=MethodName, color=Color, linewidth=1.4, alpha=0.85)
+        Ax.plot(ReferenceTimes, QueryFrameTimes, label = MethodName, color = Color, linewidth = 1.4, alpha = 0.85)
 
     SharedBeatCount = min(len(QueryBeatTimestamps), len(ReferenceBeatTimestamps))
     Ax.scatter(
         ReferenceBeatTimestamps[:SharedBeatCount],
         QueryBeatTimestamps[:SharedBeatCount],
-        color="black", s=10, zorder=5, label="Ground truth beats",
+        color = "black", s = 10, zorder = 5, label = "Ground truth beats",
     )
 
     ShortName = RecordingName.replace(f"{PieceName}_", "")
     Ax.set_xlabel("Reference time (s)")
     Ax.set_ylabel("Query time (s)")
     Ax.set_title(f"Alignment Paths — {ShortName}")
-    Ax.legend(fontsize=8)
-    Ax.grid(alpha=0.25)
+    Ax.legend(fontsize = 8)
+    Ax.grid(alpha = 0.25)
 
     OutputDir = PlotsDir / "alignment_paths" / PieceName
-    OutputDir.mkdir(parents=True, exist_ok=True)
+    OutputDir.mkdir(parents = True, exist_ok = True)
     OutputPath = OutputDir / f"{RecordingName}.png"
-    Fig.savefig(str(OutputPath), dpi=150)
+    Fig.savefig(str(OutputPath), dpi = 150)
     plt.close(Fig)
     print(f"  Alignment path saved → {OutputPath}")
 
@@ -471,8 +473,7 @@ def BenchmarkPiece(PieceDir: Path, JobCount: int = -1) -> Optional[tuple[str, li
     )
 
     print(f"[{PieceName}] Evaluating {len(HeldOutRecordingPaths)} held-out recordings with {JobCount} job(s)...")
-    RawResults = list(tqdm(
-        Parallel(n_jobs=JobCount, backend="loky", return_as="generator")(
+    RawResults = Parallel(n_jobs = JobCount, backend = "loky", verbose = 11)(
             delayed(EvaluateHeldOutRecording)(
                 QueryRecordingPath,
                 ReferenceChroma,
@@ -482,10 +483,7 @@ def BenchmarkPiece(PieceDir: Path, JobCount: int = -1) -> Optional[tuple[str, li
                 TrainedHMM.InitialDistribution,
             )
             for QueryRecordingPath in HeldOutRecordingPaths
-        ),
-        total=len(HeldOutRecordingPaths),
-        desc=PieceName,
-    ))
+        )
     Results = [Result for Result in RawResults if Result is not None]
     return PieceName, Results, ReferenceBeatTimestamps
 
