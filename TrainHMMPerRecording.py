@@ -4,6 +4,8 @@ import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
+from tqdm import tqdm
+
 from BatchTrainAndSaveHMM import HMM, VerifyAndNormalizeTransitionMatrix
 from IterativeTrainHMM import Exec_IterativeTrainHMM
 
@@ -122,57 +124,60 @@ def TrainAllPerRecording(
     CompletedCount = 0
     FailedCount = 0
 
-    if WorkerCount == 1:
-        for PieceName, ReferenceRecordingPathString, QueryRecordingPathStrings in Tasks:
-            ReferenceName = Path(ReferenceRecordingPathString).stem
-            print(f"[{CompletedCount + 1}/{TotalTaskCount}] Starting {PieceName} / {ReferenceName}")
-            try:
-                Result = TrainAndSaveOneReference(
-                    PieceName,
-                    ReferenceRecordingPathString,
-                    QueryRecordingPathStrings,
-                    str(OutputDir),
-                )
-            except Exception as Error:
-                FailedCount += 1
-                CompletedCount += 1
-                print(f"[{CompletedCount}/{TotalTaskCount}] FAILED {PieceName} / {ReferenceName}: {Error}")
-                continue
-
-            CompletedCount += 1
-            _, ReferenceRecordingName, QueryCount, OutputPath = Result
-            print(
-                f"[{CompletedCount}/{TotalTaskCount}] Saved {PieceName} / "
-                f"{ReferenceRecordingName} using {QueryCount} query recording(s): {OutputPath}"
-            )
-    else:
-        with ProcessPoolExecutor(max_workers = WorkerCount) as Executor:
-            FutureToTask = {
-                Executor.submit(
-                    TrainAndSaveOneReference,
-                    PieceName,
-                    ReferenceRecordingPathString,
-                    QueryRecordingPathStrings,
-                    str(OutputDir),
-                ): (PieceName, Path(ReferenceRecordingPathString).stem)
-                for PieceName, ReferenceRecordingPathString, QueryRecordingPathStrings in Tasks
-            }
-
-            for Future in as_completed(FutureToTask):
-                PieceName, ReferenceRecordingName = FutureToTask[Future]
+    with tqdm(total = TotalTaskCount, desc = "Trained HMMs", unit = "model") as ProgressBar:
+        if WorkerCount == 1:
+            for PieceName, ReferenceRecordingPathString, QueryRecordingPathStrings in Tasks:
+                ReferenceName = Path(ReferenceRecordingPathString).stem
+                tqdm.write(f"[{CompletedCount + 1}/{TotalTaskCount}] Starting {PieceName} / {ReferenceName}")
                 try:
-                    _, ReferenceRecordingName, QueryCount, OutputPath = Future.result()
+                    Result = TrainAndSaveOneReference(
+                        PieceName,
+                        ReferenceRecordingPathString,
+                        QueryRecordingPathStrings,
+                        str(OutputDir),
+                    )
                 except Exception as Error:
                     FailedCount += 1
                     CompletedCount += 1
-                    print(f"[{CompletedCount}/{TotalTaskCount}] FAILED {PieceName} / {ReferenceRecordingName}: {Error}")
+                    tqdm.write(f"[{CompletedCount}/{TotalTaskCount}] FAILED {PieceName} / {ReferenceName}: {Error}")
                     continue
 
                 CompletedCount += 1
-                print(
+                ProgressBar.update(1)
+                _, ReferenceRecordingName, QueryCount, OutputPath = Result
+                tqdm.write(
                     f"[{CompletedCount}/{TotalTaskCount}] Saved {PieceName} / "
                     f"{ReferenceRecordingName} using {QueryCount} query recording(s): {OutputPath}"
                 )
+        else:
+            with ProcessPoolExecutor(max_workers = WorkerCount) as Executor:
+                FutureToTask = {
+                    Executor.submit(
+                        TrainAndSaveOneReference,
+                        PieceName,
+                        ReferenceRecordingPathString,
+                        QueryRecordingPathStrings,
+                        str(OutputDir),
+                    ): (PieceName, Path(ReferenceRecordingPathString).stem)
+                    for PieceName, ReferenceRecordingPathString, QueryRecordingPathStrings in Tasks
+                }
+
+                for Future in as_completed(FutureToTask):
+                    PieceName, ReferenceRecordingName = FutureToTask[Future]
+                    try:
+                        _, ReferenceRecordingName, QueryCount, OutputPath = Future.result()
+                    except Exception as Error:
+                        FailedCount += 1
+                        CompletedCount += 1
+                        tqdm.write(f"[{CompletedCount}/{TotalTaskCount}] FAILED {PieceName} / {ReferenceRecordingName}: {Error}")
+                        continue
+
+                    CompletedCount += 1
+                    ProgressBar.update(1)
+                    tqdm.write(
+                        f"[{CompletedCount}/{TotalTaskCount}] Saved {PieceName} / "
+                        f"{ReferenceRecordingName} using {QueryCount} query recording(s): {OutputPath}"
+                    )
 
     print(f"\nDone. Succeeded: {CompletedCount - FailedCount}. Failed: {FailedCount}. Total: {TotalTaskCount}.")
 
