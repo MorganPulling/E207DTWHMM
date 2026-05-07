@@ -36,6 +36,20 @@ def ComputeLogGaussianEmission(
     # This is just the log probability of the multivariate Gaussian pdf
     return -0.5 * (FeatureDim * np.log(2 * np.pi) + LogCovarianceDeterminant + MahalanobisSquared)
 
+def RuntimeLog(Values: np.ndarray) -> np.ndarray:
+    """
+    Computes log(x) for positive entries and fills -inf for zero or negative entries.
+
+    np.where(condition, np.log(values), -np.inf) still evaluates np.log(values)
+    for every entry, so zeros produce RuntimeWarnings even though they are later
+    replaced. The masked ufunc form avoids evaluating log at bad entries.
+    """
+    Values = np.asarray(Values, dtype = float)
+    LogValues = np.full(Values.shape, -np.inf, dtype = float)
+
+    np.log(Values, out = LogValues, where = Values > 0)
+
+    return LogValues
 
 @dataclass
 class HMMParameters:
@@ -118,7 +132,7 @@ def PreprocessHMMParameters(
     StateCount = len(Means)
 
     # Ensure that transitions with negative (impossible) probabilities or zero probabilities are never reached
-    LogTransitionMatrix = np.where(TransitionMatrix > 0, np.log(TransitionMatrix), -np.inf)
+    LogTransitionMatrix = RuntimeLog(TransitionMatrix)
 
     CovarianceInverses = []
     LogCovarianceDeterminants = []
@@ -152,7 +166,7 @@ def InitializeViterbi(InitialDistribution: np.ndarray) -> ViterbiRunningState:
     """
     PiFlat = np.array(InitialDistribution).flatten().astype(float)
 
-    LogPi = np.where(PiFlat > 0, np.log(PiFlat), -np.inf)
+    LogPi = RuntimeLog(PiFlat)
 
     # This isn't needed in the case that the initial distribution sums to 1, 
     # but we offset zero entries by a very small value. We need valid log probabilities,
