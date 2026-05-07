@@ -12,18 +12,23 @@ import Constants
 import HMMOLTW
 from BatchTrainAndSaveHMM import HMM
 from RunBenchmark import (
-    EvaluateHeldOutRecording,
     FindBeatFilePath,
     LoadBeatTimestamps,
-    METHOD_NAMES,
+    VITERBI_SEARCH_HALF_WIDTH,
 )
-from TrainHMMPerRecording import GetQueryRecordingPaths, GetSortedWavPaths
+from TrainHMMPerRecording import (
+    GetQueryRecordingPaths,
+    GetSortedWavPaths,
+    TRAINING_FRACTION as DEFAULT_TRAINING_FRACTION,
+)
 
 
 DATA_WAV_DIR = Path("data/wav_22050_mono")
 TRAINED_HMM_DIR = Path("TrainedHMMsPerRecording")
 OUTPUT_CSV_PATH = Path("per_recording_hmm_benchmark_results.csv")
-TRAINING_FRACTION = 0.80
+TRAINING_FRACTION = DEFAULT_TRAINING_FRACTION
+HMM_METHOD_NAME = "HMM"
+REQUIRED_HMM_FIELDS = {"TransitionMatrix", "InitialDistribution", "Means", "Covars"}
 
 
 def GetHeldOutQueryPaths(
@@ -93,24 +98,81 @@ def BuildBenchmarkTasks(
     return Tasks
 
 
-def LoadReferenceContext(ReferenceRecordingPath: Path) -> Optional[tuple[np.ndarray, np.ndarray, float]]:
+def LoadReferenceContext(ReferenceRecordingPath: Path) -> Optional[tuple[np.ndarray, float]]:
     ReferenceBeatFilePath = FindBeatFilePath(ReferenceRecordingPath)
     if ReferenceBeatFilePath is None:
         print(f"    No beat annotation for reference {ReferenceRecordingPath.name}, skipping.")
         return None
 
-    ReferenceAudio, _ = librosa.load(str(ReferenceRecordingPath), sr = Constants.DEFAULT_SAMPLE_RATE)
-    ReferenceChroma = librosa.feature.chroma_stft(
-        y = ReferenceAudio,
+    ReferenceDurationSeconds = librosa.get_duration(path = str(ReferenceRecordingPath))
+    ReferenceBeatTimestamps = LoadBeatTimestamps(ReferenceBeatFilePath)
+
+    return ReferenceBeatTimestamps, ReferenceDurationSeconds
+
+
+def LoadCompatibleHMM(HMMFilePath: Path) -> Optional[HMM]:
+    with np.load(str(HMMFilePath), allow_pickle = True) as Data:
+        AvailableFields = set(Data.files)
+        MissingFields = sorted(REQUIRED_HMM_FIELDS - AvailableFields)
+        if MissingFields:
+            print(
+                f"Incompatible trained HMM format at {HMMFilePath}: "
+                f"missing required field(s): {', '.join(MissingFields)}. "
+                f"Expected at least: {', '.join(sorted(REQUIRED_HMM_FIELDS))}."
+            )
+            return None
+
+        PieceName = str(Data["PieceName"]) if "PieceName" in AvailableFields else HMMFilePath.parent.name
+        ReferenceRecordingName = (
+            str(Data["ReferenceRecordingName"])
+            if "ReferenceRecordingName" in AvailableFields
+            else HMMFilePath.stem
+        )
+        return HMM(
+            TransitionMatrix = Data["TransitionMatrix"],
+            InitialDistribution = Data["InitialDistribution"],
+            Means = list(Data["Means"]),
+            Covars = list(Data["Covars"]),
+            PieceName = PieceName,
+            ReferenceRecordingName = ReferenceRecordingName,
+        )
+
+
+def EvaluateHMMAlignmentForQuery(
+    QueryRecordingPath: Path,
+    PreprocessedHMM: HMMOLTW.HMMParameters,
+    InitialDistribution: np.ndarray,
+) -> Optional[dict]:
+    QueryBeatFilePath = FindBeatFilePath(QueryRecordingPath)
+    if QueryBeatFilePath is None:
+        print(f"    No beat annotation for {QueryRecordingPath.name}, skipping.")
+        return None
+    QueryBeatTimestamps = LoadBeatTimestamps(QueryBeatFilePath)
+
+    QueryAudio, _ = librosa.load(str(QueryRecordingPath), sr = Constants.DEFAULT_SAMPLE_RATE)
+    QueryChroma = librosa.feature.chroma_stft(
+        y = QueryAudio,
         sr = Constants.DEFAULT_SAMPLE_RATE,
         hop_length = Constants.DEFAULT_HOP_SIZE_SAMPLES,
     )
-    ReferenceDurationSeconds = librosa.get_duration(
-        y = ReferenceAudio, sr = Constants.DEFAULT_SAMPLE_RATE
-    )
-    ReferenceBeatTimestamps = LoadBeatTimestamps(ReferenceBeatFilePath)
 
-    return ReferenceChroma, ReferenceBeatTimestamps, ReferenceDurationSeconds
+    ViterbiState = HMMOLTW.InitializeViterbi(InitialDistribution)
+    ReferenceFrameEstimates = []
+    for QueryFrameIndex in range(QueryChroma.shape[1]):
+        ViterbiState = HMMOLTW.StepViterbi(
+            ViterbiState,
+            PreprocessedHMM,
+            QueryChroma[:, QueryFrameIndex],
+            WindowHalfWidth = VITERBI_SEARCH_HALF_WIDTH,
+        )
+        ReferenceFrameEstimates.append(ViterbiState.CurrentReferenceEstimate)
+
+    return {
+        "Recording": QueryRecordingPath.stem,
+        "QueryFrameCount": QueryChroma.shape[1],
+        "QueryBeatTimestamps": QueryBeatTimestamps,
+        "HMM_RefFrames": np.array(ReferenceFrameEstimates),
+    }
 
 
 def BuildPerBeatRows(
@@ -123,6 +185,11 @@ def BuildPerBeatRows(
 ) -> list[dict]:
     QueryFrameTimes = librosa.frames_to_time(
         np.arange(Result["QueryFrameCount"]),
+        sr = Constants.DEFAULT_SAMPLE_RATE,
+        hop_length = Constants.DEFAULT_HOP_SIZE_SAMPLES,
+    )
+    EstimatedReferenceTimes = librosa.frames_to_time(
+        Result["HMM_RefFrames"],
         sr = Constants.DEFAULT_SAMPLE_RATE,
         hop_length = Constants.DEFAULT_HOP_SIZE_SAMPLES,
     )
@@ -139,21 +206,15 @@ def BuildPerBeatRows(
             "ReferenceBeatTimeSeconds": ReferenceBeatTimestamps[BeatIndex],
         }
 
-        for MethodName in METHOD_NAMES:
-            EstimatedReferenceTimes = librosa.frames_to_time(
-                Result[f"{MethodName}_RefFrames"],
-                sr = Constants.DEFAULT_SAMPLE_RATE,
-                hop_length = Constants.DEFAULT_HOP_SIZE_SAMPLES,
-            )
-            EstimatedReferenceTime = float(np.interp(
-                Result["QueryBeatTimestamps"][BeatIndex],
-                QueryFrameTimes,
-                EstimatedReferenceTimes,
-            ))
-            AbsoluteErrorSeconds = abs(EstimatedReferenceTime - ReferenceBeatTimestamps[BeatIndex])
-            Row[f"{MethodName} Estimated Reference Time Seconds"] = EstimatedReferenceTime
-            Row[f"{MethodName} Absolute Error Seconds"] = AbsoluteErrorSeconds
-            Row[f"{MethodName} Absolute Error Percent"] = AbsoluteErrorSeconds / ReferenceDurationSeconds * 100.0
+        EstimatedReferenceTime = float(np.interp(
+            Result["QueryBeatTimestamps"][BeatIndex],
+            QueryFrameTimes,
+            EstimatedReferenceTimes,
+        ))
+        AbsoluteErrorSeconds = abs(EstimatedReferenceTime - ReferenceBeatTimestamps[BeatIndex])
+        Row[f"{HMM_METHOD_NAME} Estimated Reference Time Seconds"] = EstimatedReferenceTime
+        Row[f"{HMM_METHOD_NAME} Absolute Error Seconds"] = AbsoluteErrorSeconds
+        Row[f"{HMM_METHOD_NAME} Absolute Error Percent"] = AbsoluteErrorSeconds / ReferenceDurationSeconds * 100.0
 
         Rows.append(Row)
 
@@ -174,8 +235,11 @@ def BenchmarkOneReference(
     if ReferenceContext is None:
         return []
 
-    ReferenceChroma, ReferenceBeatTimestamps, ReferenceDurationSeconds = ReferenceContext
-    TrainedHMM = HMM.Load(HMMFilePath)
+    ReferenceBeatTimestamps, ReferenceDurationSeconds = ReferenceContext
+    TrainedHMM = LoadCompatibleHMM(HMMFilePath)
+    if TrainedHMM is None:
+        return []
+
     PreprocessedHMM = HMMOLTW.PreprocessHMMParameters(
         TrainedHMM.TransitionMatrix,
         TrainedHMM.Means,
@@ -185,11 +249,8 @@ def BenchmarkOneReference(
     Results = []
     for QueryPathString in HeldOutQueryPathStrings:
         QueryRecordingPath = Path(QueryPathString)
-        Result = EvaluateHeldOutRecording(
+        Result = EvaluateHMMAlignmentForQuery(
             QueryRecordingPath,
-            ReferenceChroma,
-            ReferenceBeatTimestamps,
-            ReferenceDurationSeconds,
             PreprocessedHMM,
             TrainedHMM.InitialDistribution,
         )
@@ -218,12 +279,11 @@ def WriteResultsCsv(Results: list[dict], OutputCsvPath: Path) -> None:
         "QueryBeatTimeSeconds",
         "ReferenceBeatTimeSeconds",
     ]
-    for MethodName in METHOD_NAMES:
-        FieldNames.extend([
-            f"{MethodName} Estimated Reference Time Seconds",
-            f"{MethodName} Absolute Error Seconds",
-            f"{MethodName} Absolute Error Percent",
-        ])
+    FieldNames.extend([
+        f"{HMM_METHOD_NAME} Estimated Reference Time Seconds",
+        f"{HMM_METHOD_NAME} Absolute Error Seconds",
+        f"{HMM_METHOD_NAME} Absolute Error Percent",
+    ])
 
     with open(OutputCsvPath, "w", newline = "") as CsvFile:
         Writer = csv.DictWriter(CsvFile, fieldnames = FieldNames)
@@ -236,13 +296,12 @@ def PrintSummary(Results: list[dict]) -> None:
         print("\nNo benchmark results to summarize.")
         return
 
-    print("\nMean MAE (% of reference duration) across held-out queries:")
-    for MethodName in METHOD_NAMES:
-        MeanError = float(np.mean([
-            Result[f"{MethodName} Absolute Error Percent"]
-            for Result in Results
-        ]))
-        print(f"  {MethodName}: {MeanError:.3f}")
+    MeanError = float(np.mean([
+        Result[f"{HMM_METHOD_NAME} Absolute Error Percent"]
+        for Result in Results
+    ]))
+    print("\nMean MAE (% of reference duration) across held-out query beats:")
+    print(f"  {HMM_METHOD_NAME}: {MeanError:.3f}")
 
 
 def ResolveJobCount(JobCount: int) -> int:
@@ -251,6 +310,43 @@ def ResolveJobCount(JobCount: int) -> int:
     if JobCount < 1:
         raise ValueError("--jobs must be -1 or a positive integer")
     return JobCount
+
+
+def RunBenchmarkTasks(Tasks: list[tuple[str, str, str, list[str]]], WorkerCount: int) -> list[list[dict]]:
+    if WorkerCount == 1:
+        return [
+            BenchmarkOneReference(
+                PieceName,
+                ReferenceRecordingPathString,
+                HMMFilePathString,
+                HeldOutQueryPathStrings,
+            )
+            for PieceName, ReferenceRecordingPathString, HMMFilePathString, HeldOutQueryPathStrings in tqdm(
+                Tasks,
+                desc = "Benchmarked HMMs",
+                unit = "model",
+            )
+        ]
+
+    ResultGenerator = Parallel(
+        n_jobs = WorkerCount,
+        backend = "loky",
+        return_as = "generator_unordered",
+    )(
+        delayed(BenchmarkOneReference)(
+            PieceName,
+            ReferenceRecordingPathString,
+            HMMFilePathString,
+            HeldOutQueryPathStrings,
+        )
+        for PieceName, ReferenceRecordingPathString, HMMFilePathString, HeldOutQueryPathStrings in Tasks
+    )
+    return list(tqdm(
+        ResultGenerator,
+        total = len(Tasks),
+        desc = "Benchmarked HMMs",
+        unit = "model",
+    ))
 
 
 def Exec_BenchmarkHMMPerRecording(
@@ -285,30 +381,7 @@ def Exec_BenchmarkHMMPerRecording(
     if TotalTaskCount == 0:
         return []
 
-    if WorkerCount == 1:
-        NestedResults = []
-        for PieceName, ReferenceRecordingPathString, HMMFilePathString, HeldOutQueryPathStrings in tqdm(
-            Tasks,
-            desc = "Benchmarked HMMs",
-            unit = "model",
-        ):
-            NestedResults.append(BenchmarkOneReference(
-                PieceName,
-                ReferenceRecordingPathString,
-                HMMFilePathString,
-                HeldOutQueryPathStrings,
-            ))
-    else:
-        NestedResults = Parallel(n_jobs = WorkerCount, backend = "loky", verbose = 10)(
-            delayed(BenchmarkOneReference)(
-                PieceName,
-                ReferenceRecordingPathString,
-                HMMFilePathString,
-                HeldOutQueryPathStrings,
-            )
-            for PieceName, ReferenceRecordingPathString, HMMFilePathString, HeldOutQueryPathStrings in Tasks
-        )
-
+    NestedResults = RunBenchmarkTasks(Tasks, WorkerCount)
     Results = [Result for ReferenceResults in NestedResults for Result in ReferenceResults]
     WriteResultsCsv(Results, OutputCsvPath)
     PrintSummary(Results)
