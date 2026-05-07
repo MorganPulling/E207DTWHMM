@@ -131,7 +131,7 @@ def RunStreamingDTW(
         ReferenceEstimate, ViterbiState, StreamingDTWState = HMMOLTW.ProcessNextHMMBlendedFrame(
             ViterbiState, StreamingDTWState, PreprocessedHMM,
             ReferenceChroma, QueryChroma[:, QueryFrameIndex],
-            SEARCH_HALF_WIDTH, 0,
+            SEARCH_HALF_WIDTH, VITERBI_SEARCH_HALF_WIDTH, 0
         )
         Estimates.append(ReferenceEstimate)
     return np.array(Estimates)
@@ -152,7 +152,7 @@ def RunViterbi(
         ReferenceEstimate, ViterbiState, StreamingDTWState = HMMOLTW.ProcessNextHMMBlendedFrame(
             ViterbiState, StreamingDTWState, PreprocessedHMM,
             ReferenceChroma, QueryChroma[:, QueryFrameIndex],
-            VITERBI_SEARCH_HALF_WIDTH, 1,
+            SEARCH_HALF_WIDTH, VITERBI_SEARCH_HALF_WIDTH, 1
         )
         Estimates.append(ReferenceEstimate)
     return np.array(Estimates)
@@ -173,7 +173,7 @@ def RunHMMInfluencedStreamingDTW(
         ReferenceEstimate, ViterbiState, StreamingDTWState = HMMOLTW.ProcessNextHMMInfluencedFrame(
             ViterbiState, StreamingDTWState, PreprocessedHMM,
             ReferenceChroma, QueryChroma[:, QueryFrameIndex],
-            SEARCH_HALF_WIDTH, HMM_INFLUENCED_WEIGHT,
+            SEARCH_HALF_WIDTH, VITERBI_SEARCH_HALF_WIDTH, HMM_INFLUENCED_WEIGHT
         )
         Estimates.append(ReferenceEstimate)
     return np.array(Estimates)
@@ -194,7 +194,7 @@ def RunHMMBlendedStreamingDTW(
         ReferenceEstimate, ViterbiState, StreamingDTWState = HMMOLTW.ProcessNextHMMBlendedFrame(
             ViterbiState, StreamingDTWState, PreprocessedHMM,
             ReferenceChroma, QueryChroma[:, QueryFrameIndex],
-            SEARCH_HALF_WIDTH, HMM_BLENDED_WEIGHT,
+            SEARCH_HALF_WIDTH, VITERBI_SEARCH_HALF_WIDTH, HMM_BLENDED_WEIGHT
         )
         Estimates.append(ReferenceEstimate)
     return np.array(Estimates)
