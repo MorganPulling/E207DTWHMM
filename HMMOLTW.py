@@ -243,7 +243,7 @@ def StepViterbi(
     WindowCenter = int(np.clip(WindowCenter, 0, ReferenceFrameCount - 1))
 
     # Only states in the window are currently possible. Let's only look forward from the current estimate.
-    WindowStart = max(0, WindowCenter)
+    WindowStart = max(0, WindowCenter - WindowHalfWidth)
     WindowEnd = min(ReferenceFrameCount, WindowCenter + WindowHalfWidth + 1)
     CurrentPossibleStates = np.arange(WindowStart, WindowEnd)
 
@@ -493,7 +493,8 @@ def ProcessNextHMMInfluencedFrame(
     HMM: HMMParameters,
     ReferenceChroma: np.ndarray,
     NewQueryFrame: np.ndarray,
-    SearchHalfWidth: int,
+    DTWSearchHalfWidth: int,
+    ViterbiSearchHalfWidth: int,
     HMMWeight: float
 ) -> tuple[int, ViterbiRunningState, StreamingDTWRunningState]:
     """
@@ -503,26 +504,27 @@ def ProcessNextHMMInfluencedFrame(
     observation when its state distribution is used to bias the DTW costs.
 
     Parameters:
-        - ViterbiState:    current running Viterbi state
-        - StreamingDTWState:       current running StreamingDTW state
-        - HMM:             preprocessed HMM parameters
-        - ReferenceChroma: (FeatureDim, RefFrameCount) reference feature matrix
-        - NewQueryFrame:   (FeatureDim,) current query chroma vector
-        - SearchHalfWidth: half-width of the StreamingDTW active window in frames
-        - HMMWeight:       scaling factor for the Viterbi cost bias
+        - ViterbiState:           current running Viterbi state
+        - StreamingDTWState:      current running StreamingDTW state
+        - HMM:                    preprocessed HMM parameters
+        - ReferenceChroma:        (FeatureDim, RefFrameCount) reference feature matrix
+        - NewQueryFrame:          (FeatureDim,) current query chroma vector
+        - DTWSearchHalfWidth:     half-width of the HMMInfluenced active window in frames
+        - ViterbiSearchHalfWidth: half-width of the Viterbi active window in frames
+        - HMMWeight:              scaling factor for the Viterbi cost bias
     Returns:
         - ReferenceFrameEstimate: best estimate of the current reference position
         - UpdatedViterbiState
         - UpdatedStreamingDTWState
     """
 
-    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame, SearchHalfWidth)
+    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame, ViterbiSearchHalfWidth)
     UpdatedStreamingDTWState = StepHMMInfluencedDTW(
         StreamingDTWState,
         ReferenceChroma,
         NewQueryFrame,
         UpdatedViterbiState.NormalizedLogProbabilities,
-        SearchHalfWidth,
+        DTWSearchHalfWidth,
         HMMWeight
     )
 
@@ -535,7 +537,8 @@ def ProcessNextHMMBlendedFrame(
     HMM: HMMParameters,
     ReferenceChroma: np.ndarray,
     NewQueryFrame: np.ndarray,
-    SearchHalfWidth: int,
+    DTWSearchHalfWidth: int,
+    ViterbiSearchHalfWidth: int,
     HMMWeight: float
 ) -> tuple[int, ViterbiRunningState, StreamingDTWRunningState]:
     """
@@ -545,26 +548,36 @@ def ProcessNextHMMBlendedFrame(
     observation when its state distribution is used to bias the DTW costs.
 
     Parameters:
-        - ViterbiState:    current running Viterbi state
-        - StreamingDTWState:       current running StreamingDTW state
-        - HMM:             preprocessed HMM parameters
-        - ReferenceChroma: (FeatureDim, RefFrameCount) reference feature matrix
-        - NewQueryFrame:   (FeatureDim,) current query chroma vector
-        - SearchHalfWidth: half-width of the StreamingDTW active window in frames
-        - HMMWeight:       scaling factor for the Viterbi cost bias
+        - ViterbiState:           current running Viterbi state
+        - StreamingDTWState:      current running StreamingDTW state
+        - HMM:                    preprocessed HMM parameters
+        - ReferenceChroma:        (FeatureDim, RefFrameCount) reference feature matrix
+        - NewQueryFrame:          (FeatureDim,) current query chroma vector
+        - DTWSearchHalfWidth:     half-width of the StreamingDTW active window in frames
+        - ViterbiSearchHalfWidth: half-width of the StreamingDTW active window in frames
+        - HMMWeight:              scaling factor for the Viterbi cost bias
     Returns:
         - ReferenceFrameEstimate: best estimate of the current reference position
         - UpdatedViterbiState
         - UpdatedStreamingDTWState
     """
 
-    UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame, SearchHalfWidth)
-    UpdatedStreamingDTWState = StepStreamingDTW(
-        StreamingDTWState,
-        ReferenceChroma,
-        NewQueryFrame,
-        SearchHalfWidth
-    )
+    # If the HMMWeight is not purely StreamingDTW, run StepViterbi
+    if HMMWeight != 0:
+        UpdatedViterbiState = StepViterbi(ViterbiState, HMM, NewQueryFrame, ViterbiSearchHalfWidth)
+    else:
+        UpdatedViterbiState = ViterbiState
+
+    # If the HMMWeight is not purely Viterbi, run StepStreamingDTW
+    if HMMWeight != 1:
+        UpdatedStreamingDTWState = StepStreamingDTW(
+            StreamingDTWState,
+            ReferenceChroma,
+            NewQueryFrame,
+            DTWSearchHalfWidth
+        )
+    else:
+        UpdatedStreamingDTWState = StreamingDTWState
 
     StreamingDTWEstimate = UpdatedStreamingDTWState.CurrentReferenceEstimate
     ViterbiEstimate = UpdatedViterbiState.CurrentReferenceEstimate
