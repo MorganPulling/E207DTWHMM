@@ -33,7 +33,7 @@ def ComputeLogGaussianEmission(
     # Note that this is the term multiplied by -1/2 in the exponent of the multivariate Gaussian.
     MahalanobisSquared = float(Diff @ CovarianceInverse @ Diff)
 
-    # This is just the log probability of the multivariate Gaussian pdf
+    # This is just the log of the multivariate Gaussian pdf
     return -0.5 * (FeatureDim * np.log(2 * np.pi) + LogCovarianceDeterminant + MahalanobisSquared)
 
 def RuntimeLog(Values: np.ndarray) -> np.ndarray:
