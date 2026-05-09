@@ -1,5 +1,5 @@
 import numpy as np
-import ExtractObservations
+import Source.ExtractObservations as ExtractObservations
 
 
 def MakeInitialDistribution(ReferenceLengthFrames: int):

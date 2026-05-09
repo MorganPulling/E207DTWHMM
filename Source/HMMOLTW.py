@@ -1,5 +1,5 @@
 import numpy as np
-import Constants
+import Source.Constants as Constants
 from numpy.linalg import inv, slogdet
 from scipy.special import logsumexp
 from dataclasses import dataclass

@@ -7,9 +7,9 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-import Constants
-import HMMOLTW
-from BatchTrainAndSaveHMM import HMM, GetSortedWavPaths, SplitTrainingRecordings
+import Source.Constants as Constants
+import Source.HMMOLTW as HMMOLTW
+from Source.BatchTrainAndSaveHMM import HMM, GetSortedWavPaths, SplitTrainingRecordings
 
 
 # ── Configuration ────────────────────────────────────────────────────────────

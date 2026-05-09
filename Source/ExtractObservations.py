@@ -1,6 +1,6 @@
 import numpy as np
 import librosa as lb
-from Constants import *
+from Source.Constants import *
 
 def DEPRECATED_MakeStatesToObservationsDictionary(Query: np.ndarray, Reference: np.ndarray, SampleRate: int = DEFAULT_SAMPLE_RATE, HopSizeSamples: int = DEFAULT_HOP_SIZE_SAMPLES):
     """

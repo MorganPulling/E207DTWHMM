@@ -6,8 +6,8 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from BatchTrainAndSaveHMM import HMM, VerifyAndNormalizeTransitionMatrix
-from IterativeTrainHMM import Exec_IterativeTrainHMM
+from Source.BatchTrainAndSaveHMM import HMM, VerifyAndNormalizeTransitionMatrix
+from Source.IterativeTrainHMM import Exec_IterativeTrainHMM
 
 
 DATA_WAV_DIR = Path("data/wav_22050_mono")

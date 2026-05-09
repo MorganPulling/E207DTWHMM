@@ -1,7 +1,7 @@
 import numpy as np
 import librosa
-import TrainHMM
-import Constants
+import Source.TrainHMM as TrainHMM
+import Source.Constants as Constants
 
 
 def UpdateHMMParameters(

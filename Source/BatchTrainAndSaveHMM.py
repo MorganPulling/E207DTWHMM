@@ -6,7 +6,7 @@ import numba as nb
 import numpy as np
 from joblib import Parallel, delayed
 
-from IterativeTrainHMM import Exec_IterativeTrainHMM
+from Source.IterativeTrainHMM import Exec_IterativeTrainHMM
 
 
 DATA_WAV_DIR = Path("data/wav_22050_mono")
